@@ -450,7 +450,7 @@ function copy-and-load-ext-data-source {
 }
 
 function wait-hdfs-replication {
-  MAX_RETRIES=6
+  MAX_RETRIES=0
   for ((RESTART_COUNT = 0; RESTART_COUNT <= MAX_RETRIES; ++RESTART_COUNT)); do
     sleep "$((RESTART_COUNT * 10))"
     FSCK_OUTPUT="$(hdfs fsck /test-warehouse)"
