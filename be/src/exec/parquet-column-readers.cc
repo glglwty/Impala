@@ -485,7 +485,7 @@ class ScalarColumnReader : public BaseScalarColumnReader {
         page_encoding_ != parquet::Encoding::PLAIN) {
       stringstream ss;
       ss << "File '" << filename() << "' is corrupt: unexpected encoding: "
-         << PrintEncoding(page_encoding_) << " for data page of column '"
+         << PrintThriftEnum(page_encoding_) << " for data page of column '"
          << schema_element().name << "'.";
       return Status(ss.str());
     }
