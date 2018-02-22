@@ -788,6 +788,7 @@ public class Analyzer {
         try {
           tbl = getTable(dbName, tblName);
         } catch (AnalysisException e) {
+          LOG.info("gettable failed: " + e.getMessage());
           if (hasMissingTbls()) throw e;
           // Ignore other exceptions to allow path resolution to continue.
         }
