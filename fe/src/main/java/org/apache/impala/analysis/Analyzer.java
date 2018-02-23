@@ -75,13 +75,10 @@ import org.apache.impala.thrift.TLineageGraph;
 import org.apache.impala.thrift.TNetworkAddress;
 import org.apache.impala.thrift.TQueryCtx;
 import org.apache.impala.thrift.TQueryOptions;
-import org.apache.impala.util.DisjointSet;
+import org.apache.impala.util.*;
 import org.apache.impala.util.Graph.RandomAccessibleGraph;
 import org.apache.impala.util.Graph.SccCondensedGraph;
 import org.apache.impala.util.Graph.WritableGraph;
-import org.apache.impala.util.IntIterator;
-import org.apache.impala.util.ListMap;
-import org.apache.impala.util.TSessionStateUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -788,7 +785,16 @@ public class Analyzer {
         try {
           tbl = getTable(dbName, tblName);
         } catch (AnalysisException e) {
-          if (hasMissingTbls()) throw e;
+          if (hasMissingTbls()) {
+            throw e;
+          }
+            LOG.info("gettable failed: " + e.getMessage() + getCatalog().lastSyncedCatalogVersion_ + getCatalog().isReady());
+            for (Db db : getCatalog().getDbs(PatternMatcher.MATCHER_MATCH_ALL)) {
+              LOG.info("db: " + db.getName());
+              for (String tblnnn : db.getAllTableNames()) {
+                LOG.info("tbl: " + tblnnn);
+              }
+            }
           // Ignore other exceptions to allow path resolution to continue.
         }
         if (tbl != null) {

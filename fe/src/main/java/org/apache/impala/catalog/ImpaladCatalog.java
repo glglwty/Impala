@@ -82,7 +82,7 @@ public class ImpaladCatalog extends Catalog {
   // all objects in the catalog have at a minimum, this version. Because updates may
   // be applied out of band of a StateStore heartbeat, it is possible the catalog
   // contains some objects > than this version.
-  private long lastSyncedCatalogVersion_ = Catalog.INITIAL_CATALOG_VERSION;
+  public long lastSyncedCatalogVersion_ = Catalog.INITIAL_CATALOG_VERSION;
 
   // Flag to determine if the Catalog is ready to accept user requests. See isReady().
   private final AtomicBoolean isReady_ = new AtomicBoolean(false);
@@ -170,7 +170,7 @@ public class ImpaladCatalog extends Catalog {
             "bytes");
       }
       if (LOG.isTraceEnabled()) {
-        LOG.trace((update.first ? "Deleting " : "Adding ") + "item: " + key + " version: "
+        LOG.info((update.first ? "Deleting " : "Adding ") + "item: " + key + " version: "
             + obj.catalog_version + " of size: " + len);
       }
       // For statestore updates, the service ID and updated version is wrapped in a

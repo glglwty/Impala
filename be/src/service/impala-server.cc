@@ -1336,8 +1336,9 @@ void ImpalaServer::CatalogUpdateCallback(
     vector<TTopicDelta>* subscriber_topic_updates) {
   StatestoreSubscriber::TopicDeltaMap::const_iterator topic =
       incoming_topic_deltas.find(CatalogServer::IMPALA_CATALOG_TOPIC);
-  if (topic == incoming_topic_deltas.end()) return;
+  DCHECK(topic != incoming_topic_deltas.end());
   const TTopicDelta& delta = topic->second;
+  if (delta.topic_entries.empty()) return;
   TopicItemSpanIterator callback_ctx (delta.topic_entries, FLAGS_compact_catalog_topic);
 
   TUpdateCatalogCacheRequest req;
