@@ -210,10 +210,12 @@ public class ImpaladCatalog extends Catalog {
     lastSyncedCatalogVersion_ = newCatalogVersion;
     // Cleanup old entries in the log.
     catalogDeltaLog_.garbageCollect(lastSyncedCatalogVersion_);
-    isReady_.set(true);
-    // Notify all the threads waiting on a catalog update.
-    synchronized (catalogUpdateEventNotifier_) {
-      catalogUpdateEventNotifier_.notifyAll();
+    if (newCatalogVersion > INITIAL_CATALOG_VERSION) {
+      isReady_.set(true);
+      // Notify all the threads waiting on a catalog update.
+      synchronized (catalogUpdateEventNotifier_) {
+        catalogUpdateEventNotifier_.notifyAll();
+      }
     }
     return new TUpdateCatalogCacheResponse(catalogServiceId_,
         CatalogObjectVersionQueue.INSTANCE.getMinimumVersion(), newCatalogVersion);
