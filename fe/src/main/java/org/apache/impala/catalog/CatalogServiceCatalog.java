@@ -1120,6 +1120,9 @@ public class CatalogServiceCatalog extends Catalog {
     reader.run();
 
     versionLock_.writeLock().lock();
+    // Catalog version should always change after the reset even if the catalog is empty.
+    // The version is bumped here for safety.
+    ++catalogVersion_;
     // Assign new versions to all the loaded data sources.
     for (DataSource dataSource: getDataSources()) {
       dataSource.setCatalogVersion(incrementAndGetCatalogVersion());

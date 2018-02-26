@@ -799,9 +799,9 @@ public class Frontend {
 
   /**
    * Waits indefinitely for the local catalog to be ready. The catalog is "ready" after
-   * the first catalog update is received from the statestore.
+   * the first non-empty catalog update is received from the statestore.
    *
-   * @see ImpaladCatalog.isReady
+   * @see ImpaladCatalog#isReady()
    */
   public void waitForCatalog() {
     LOG.info("Waiting for first catalog update from the statestore.");
