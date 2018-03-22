@@ -1459,4 +1459,34 @@ public class ToSqlTest extends FrontendTestBase {
     testToSql(":shutdown('hostname', 1000)");
     testToSql(":shutdown(1000)");
   }
+
+  /**
+   * Test percentile rewrite. A rewrite shouldn't affect the SQL string of the query.
+   */
+  @Test
+  public void testPercentile() {
+    // Test ordinals
+    testToSql("select tinyint_col, percentile_disc(0.5) within group " +
+        "(order by int_col), percentile_disc(0.5) within group (order by bool_col) " +
+        "from functional.alltypesagg group by 1 having 3 order by 2",
+        "SELECT tinyint_col, percentile_disc(0.5) within group (order by int_col), " +
+        "percentile_disc(0.5) within group (order by bool_col) " +
+        "FROM functional.alltypesagg GROUP BY 1 HAVING 3 ORDER BY 2 ASC");
+    // Test aliases
+    testToSql("select tinyint_col as int_col," +
+        "percentile_disc(0.5) within group (order by string_col) as tinyint_col," +
+        "percentile_disc(0.5) within group (order by bool_col) as a " +
+        "from functional.alltypesagg group by int_col having a order by tinyint_col",
+        "SELECT tinyint_col int_col, percentile_disc(0.5) within group " +
+        "(order by string_col) tinyint_col, percentile_disc(0.5) within group " +
+        "(order by bool_col) a FROM functional.alltypesagg GROUP BY int_col HAVING a " +
+        "ORDER BY tinyint_col ASC");
+    // Test subquery rewrite
+    testToSql("select count(*) from functional.alltypesagg a where tinyint_col < " +
+        "(select percentile_disc(0.2) within group (order by tinyint_col) " +
+        "from functional.alltypesagg where year = a.year)",
+        "SELECT count(*) FROM functional.alltypesagg a WHERE tinyint_col < " +
+        "(SELECT percentile_disc(0.2) within group (order by tinyint_col) " +
+        "FROM functional.alltypesagg WHERE year = a.year)");
+  }
 }

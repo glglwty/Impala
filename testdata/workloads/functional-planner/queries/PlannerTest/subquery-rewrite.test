@@ -2806,3 +2806,130 @@ PLAN-ROOT SINK
    partitions=24/24 files=24 size=478.45KB
    runtime filters: RF000 -> int_col
 ====
+# Percentile with subquery rewrite
+select percentile_disc(0.5) within group (order by int_col)
+from functional.alltypes
+where id in (select id from functional.alltypesagg);
+---- PLAN
+PLAN-ROOT SINK
+|
+06:AGGREGATE [FINALIZE]
+|  output: min(CASE WHEN row_number() - count(int_col) * 0.5 >= 0 THEN int_col END)
+|
+05:ANALYTIC
+|  functions: count(int_col)
+|
+04:ANALYTIC
+|  functions: row_number()
+|  order by: int_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+03:SORT
+|  order by: int_col ASC NULLS LAST
+|
+02:HASH JOIN [LEFT SEMI JOIN]
+|  hash predicates: id = id
+|  runtime filters: RF000 <- id
+|
+|--01:SCAN HDFS [functional.alltypesagg]
+|     partitions=11/11 files=11 size=814.73KB
+|
+00:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+   runtime filters: RF000 -> id
+====
+select * from functional.alltypesagg where
+  int_col not in (select percentile_disc(0.5) within group (order by int_col)
+    from functional.alltypesagg group by tinyint_col) and
+  tinyint_col = (select percentile_disc(0.1) within group (order by tinyint_col)
+    from functional.alltypesagg);
+---- PLAN
+PLAN-ROOT SINK
+|
+12:HASH JOIN [LEFT SEMI JOIN]
+|  hash predicates: tinyint_col = min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_0` >= 0 THEN `_percentile_view`.`_slotRef_1` END)
+|  runtime filters: RF000 <- min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_0` >= 0 THEN `_percentile_view`.`_slotRef_1` END)
+|
+|--10:AGGREGATE [FINALIZE]
+|  |  output: min(CASE WHEN row_number() - count(tinyint_col) * 0.1 >= 0 THEN tinyint_col END)
+|  |
+|  09:ANALYTIC
+|  |  functions: count(tinyint_col)
+|  |
+|  08:ANALYTIC
+|  |  functions: row_number()
+|  |  order by: tinyint_col ASC
+|  |  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|  |
+|  07:SORT
+|  |  order by: tinyint_col ASC NULLS LAST
+|  |
+|  06:SCAN HDFS [functional.alltypesagg]
+|     partitions=11/11 files=11 size=814.73KB
+|
+11:HASH JOIN [NULL AWARE LEFT ANTI JOIN]
+|  hash predicates: int_col = min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_0` >= 0 THEN `_percentile_view`.`_slotRef_1` END)
+|
+|--05:AGGREGATE [FINALIZE]
+|  |  output: min(CASE WHEN row_number() - count(int_col) * 0.5 >= 0 THEN int_col END)
+|  |  group by: tinyint_col
+|  |
+|  04:ANALYTIC
+|  |  functions: count(int_col)
+|  |  partition by: tinyint_col
+|  |
+|  03:ANALYTIC
+|  |  functions: row_number()
+|  |  partition by: tinyint_col
+|  |  order by: int_col ASC
+|  |  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|  |
+|  02:SORT
+|  |  order by: tinyint_col ASC NULLS FIRST, int_col ASC NULLS LAST
+|  |
+|  01:SCAN HDFS [functional.alltypesagg]
+|     partitions=11/11 files=11 size=814.73KB
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+   runtime filters: RF000 -> tinyint_col
+====
+# percentile with correlated subquery
+select count(*) from functional.alltypesagg a where tinyint_col <
+  (select percentile_disc(0.2) within group (order by tinyint_col)
+from functional.alltypesagg where year = a.year);
+---- PLAN
+PLAN-ROOT SINK
+|
+07:AGGREGATE [FINALIZE]
+|  output: count(*)
+|
+06:HASH JOIN [LEFT SEMI JOIN]
+|  hash predicates: a.year = `_percentile_view`.`_slotRef_2`
+|  other join predicates: tinyint_col < min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_0` >= 0 THEN `_percentile_view`.`_slotRef_1` END)
+|  runtime filters: RF000 <- `_percentile_view`.`_slotRef_2`
+|
+|--05:AGGREGATE [FINALIZE]
+|  |  output: min(CASE WHEN row_number() - count(tinyint_col) * 0.2 >= 0 THEN tinyint_col END)
+|  |  group by: year
+|  |
+|  04:ANALYTIC
+|  |  functions: count(tinyint_col)
+|  |  partition by: year
+|  |
+|  03:ANALYTIC
+|  |  functions: row_number()
+|  |  partition by: year
+|  |  order by: tinyint_col ASC
+|  |  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|  |
+|  02:SORT
+|  |  order by: year ASC NULLS FIRST, tinyint_col ASC NULLS LAST
+|  |
+|  01:SCAN HDFS [functional.alltypesagg]
+|     partitions=11/11 files=11 size=814.73KB
+|
+00:SCAN HDFS [functional.alltypesagg a]
+   partitions=11/11 files=11 size=814.73KB
+   runtime filters: RF000 -> a.year
+====

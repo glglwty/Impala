@@ -73,6 +73,11 @@ public class AggregateFunction extends Function {
   // empty input in BE).
   private boolean returnsNonNullOnEmpty_;
 
+
+  // Logical functions are used only for FE analysis and rewriting. They don't have BE
+  // implementations and shouldn't be passed to BE.
+  private boolean isLogical_;
+
   public AggregateFunction(FunctionName fnName, List<Type> argTypes, Type retType,
       boolean hasVarArgs) {
     super(fnName, argTypes, retType, hasVarArgs);
@@ -97,6 +102,7 @@ public class AggregateFunction extends Function {
     isAnalyticFn_ = false;
     isAggregateFn_ = true;
     returnsNonNullOnEmpty_ = false;
+    isLogical_ = false;
   }
 
   public static AggregateFunction createForTesting(FunctionName fnName,
@@ -142,6 +148,24 @@ public class AggregateFunction extends Function {
     fn.isAggregateFn_ = true;
     fn.returnsNonNullOnEmpty_ = returnsNonNullOnEmpty;
     fn.setIsPersistent(true);
+    return fn;
+  }
+
+  /**
+   * Create an aggregation function without a BE implementation, only for FE rewriting.
+   */
+  static AggregateFunction createLogicalBuiltin(Db db, String name,
+      List<Type> argTypes, Type retType, boolean ignoresDistinct,
+      boolean isAnalyticFn, boolean returnsNonNullOnEmpty) {
+    AggregateFunction fn = new AggregateFunction(new FunctionName(db.getName(), name),
+        argTypes, retType, false);
+    fn.setBinaryType(TFunctionBinaryType.BUILTIN);
+    fn.intermediateType_ = Type.NULL;
+    fn.ignoresDistinct_ = ignoresDistinct;
+    fn.isAnalyticFn_ = isAnalyticFn;
+    fn.isAggregateFn_ = true;
+    fn.returnsNonNullOnEmpty_ = returnsNonNullOnEmpty;
+    fn.isLogical_ = true;
     return fn;
   }
 
@@ -248,6 +272,8 @@ public class AggregateFunction extends Function {
 
   @Override
   public TFunction toThrift() {
+    Preconditions.checkState(!isLogical_,
+        "Logical functions shouldn't escape FE: " + toString());
     TFunction fn = super.toThrift();
     TAggregateFunction agg_fn = new TAggregateFunction();
     agg_fn.setIs_analytic_only_fn(isAnalyticFn_ && !isAggregateFn_);

@@ -385,6 +385,10 @@ public class AnalysisContext {
       return isQueryStmt() || isInsertStmt() || isCreateTableAsSelectStmt()
           || isUpdateStmt() || isDeleteStmt();
     }
+    boolean requiresPercentileRewrite() {
+      return analyzer_.queryContainsPercentile() &&  !(stmt_ instanceof CreateViewStmt)
+          && !(stmt_ instanceof AlterViewStmt) && !(stmt_ instanceof ShowCreateTableStmt);
+    }
     public TLineageGraph getThriftLineageGraph() {
       return analyzer_.getThriftSerializedLineageGraph();
     }
@@ -448,7 +452,7 @@ public class AnalysisContext {
     analysisResult_.stmt_.analyze(analysisResult_.analyzer_);
     boolean isExplain = analysisResult_.isExplainStmt();
 
-    // Apply expr and subquery rewrites.
+    // Apply rewrites.
     boolean reAnalyze = false;
     ExprRewriter rewriter = analysisResult_.analyzer_.getExprRewriter();
     if (analysisResult_.requiresExprRewrite()) {
@@ -457,7 +461,11 @@ public class AnalysisContext {
       reAnalyze = rewriter.changed();
     }
     if (analysisResult_.requiresSubqueryRewrite()) {
-      new StmtRewriter.SubqueryRewriter().rewrite(analysisResult_);
+      (new StmtRewriter.SubqueryRewriter()).rewrite(analysisResult_);
+      reAnalyze = true;
+    }
+    if (analysisResult_.requiresPercentileRewrite()) {
+      (new StmtRewriter.PercentileRewriter()).rewrite(analysisResult_);
       reAnalyze = true;
     }
     if (!reAnalyze) return;

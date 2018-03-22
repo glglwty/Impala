@@ -186,6 +186,7 @@ import org.apache.impala.thrift.TReservedWordsVersion;
     keywordMap.put("partition", SqlParserSymbols.KW_PARTITION);
     keywordMap.put("partitioned", SqlParserSymbols.KW_PARTITIONED);
     keywordMap.put("partitions", SqlParserSymbols.KW_PARTITIONS);
+    keywordMap.put("percentile_disc", SqlParserSymbols.KW_PERCENTILE_DISC);
     keywordMap.put("preceding", SqlParserSymbols.KW_PRECEDING);
     keywordMap.put("prepare_fn", SqlParserSymbols.KW_PREPARE_FN);
     keywordMap.put("primary", SqlParserSymbols.KW_PRIMARY);
@@ -254,6 +255,7 @@ import org.apache.impala.thrift.TReservedWordsVersion;
     keywordMap.put("when", SqlParserSymbols.KW_WHEN);
     keywordMap.put("where", SqlParserSymbols.KW_WHERE);
     keywordMap.put("with", SqlParserSymbols.KW_WITH);
+    keywordMap.put("within", SqlParserSymbols.KW_WITHIN);
 
     // Initilize tokenIdMap for error reporting
     tokenIdMap = new HashMap<>();

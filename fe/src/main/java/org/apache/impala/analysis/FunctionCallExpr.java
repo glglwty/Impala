@@ -484,9 +484,8 @@ public class FunctionCallExpr extends Expr {
       // check here.
       AggregateFunction aggFn = (AggregateFunction)fn_;
       Preconditions.checkNotNull(aggFn);
-      Type intermediateType = aggFn.getIntermediateType();
-      if (intermediateType == null) intermediateType = type_;
       Preconditions.checkState(!type_.isWildcardDecimal());
+      mergeAggInputFn_.analyze(analyzer);
       return;
     }
 
@@ -673,14 +672,14 @@ public class FunctionCallExpr extends Expr {
   public Expr clone() { return new FunctionCallExpr(this); }
 
   @Override
-  protected Expr substituteImpl(ExprSubstitutionMap smap, Analyzer analyzer) {
-    Expr e = super.substituteImpl(smap, analyzer);
+  protected Expr substituteImpl(com.google.common.base.Function<Expr, Expr> f) {
+    Expr e = super.substituteImpl(f);
     if (!(e instanceof FunctionCallExpr)) return e;
     FunctionCallExpr fn = (FunctionCallExpr) e;
     FunctionCallExpr mergeFn = fn.getMergeAggInputFn();
     if (mergeFn != null) {
       // The merge function needs to be substituted as well.
-      Expr substitutedFn = mergeFn.substitute(smap, analyzer, true);
+      Expr substitutedFn = mergeFn.substituteImpl(f);
       Preconditions.checkState(substitutedFn instanceof FunctionCallExpr);
       fn.setMergeAggInputFn((FunctionCallExpr) substitutedFn);
     }

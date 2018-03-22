@@ -1401,3 +1401,311 @@ group by P, Q order by P, Q
 ---- TYPES
 bigint, float, float
 ====
+# Test percentile values out of [0, 1]. The result should be NULL.
+# PostgreSQL will return an error.
+select percentile_disc(-1) within group (order by tinyint_col),
+  percentile_disc(1.1) within group (order by tinyint_col) from alltypesagg;
+---- RESULTS
+NULL,NULL
+---- TYPES
+TINYINT,TINYINT
+====
+---- QUERY
+# Test ordinal in group by, having, order by clauses, with percentile
+select tinyint_col, percentile_disc(0.5) within group (order by int_col),
+    percentile_disc(0.5) within group (order by bool_col) from alltypesagg
+group by 1 having 3 order by 2;
+---- RESULTS
+2,492,true
+4,494,true
+6,496,true
+8,498,true
+NULL,500,true
+---- TYPES
+TINYINT,INT,BOOLEAN
+====
+---- QUERY
+# Test aliases with percentile
+select tinyint_col as int_col,
+    percentile_disc(0.5) within group (order by string_col) as tinyint_col,
+    percentile_disc(0.5) within group (order by bool_col) as a
+    from alltypesagg group by int_col having a order by tinyint_col;
+---- RESULTS
+NULL,'530',true
+2,'532',true
+4,'54',true
+6,'556',true
+8,'558',true
+---- TYPES
+TINYINT,STRING,BOOLEAN
+====
+---- QUERY
+# Aliases have no effect when ordering by an non-trivial expr
+select tinyint_col as int_col,
+   percentile_disc(0.5) within group (order by string_col) as tinyint_col,
+   percentile_disc(0.5) within group (order by bool_col) as a
+from alltypesagg group by int_col having a order by -tinyint_col;
+---- RESULTS
+8,'558',true
+6,'556',true
+4,'54',true
+2,'532',true
+NULL,'530',true
+---- TYPES
+TINYINT,STRING,BOOLEAN
+====
+---- QUERY
+# percentile in a view
+drop view if exists percentile_view;
+create view percentile_view as select percentile_disc(0.5) within group (order by int_col)
+as a from alltypesagg group by tinyint_col;
+---- RESULTS
+'View has been created.'
+====
+---- QUERY
+# views are not rewritten
+show create view percentile_view;
+---- RESULTS
+'CREATE VIEW functional.percentile_view AS\nSELECT percentile_disc(0.5) within group (order by int_col) a FROM functional.alltypesagg GROUP BY tinyint_col'
+====
+---- QUERY
+select percentile_disc(0.5) within group (order by a) from percentile_view where a - 3
+in (select * from percentile_view);
+---- RESULTS
+497
+---- TYPES
+INT
+====
+---- QUERY
+drop view if exists percentile_view;
+====
+---- QUERY
+# The following percentile tests are verified against PostgreSQL.
+# Test percentile=0, 1. Null should not appear at any end.
+select percentile_disc(0) within group (order by tinyint_col),
+  percentile_disc(1) within group (order by tinyint_col),
+  percentile_disc(0) within group (order by tinyint_col desc),
+  percentile_disc(1) within group (order by tinyint_col desc) from alltypesagg;
+---- RESULTS
+1,9,9,1
+---- TYPES
+TINYINT,TINYINT,TINYINT,TINYINT
+====
+---- QUERY
+# Test percentile expr in another expr.
+select cast(percentile_disc(0.2) within group (order by bigint_col) as decimal) /
+  cast(percentile_disc(0.8) within group (order by bigint_col) as decimal)
+from alltypesagg;
+---- RESULTS
+0.2500000000
+---- TYPES
+DECIMAL
+====
+---- QUERY
+# Test percentile_disc on a non-numeric column
+select tinyint_col, percentile_disc(0.5) within group (order by string_col)
+  from alltypesagg group by tinyint_col order by tinyint_col;
+---- RESULTS
+1,'531'
+2,'532'
+3,'533'
+4,'54'
+5,'545'
+6,'556'
+7,'557'
+8,'558'
+9,'559'
+NULL,'530'
+---- TYPES
+TINYINT,STRING
+====
+---- QUERY
+# Test non-const percentile expr.
+select tinyint_col, percentile_disc(case when tinyint_col >= 5 then 0.8 else 0.2 end)
+  within group (order by bigint_col) from alltypesagg
+  group by tinyint_col order by tinyint_col;
+---- RESULTS
+1,1910
+2,1920
+3,1930
+4,1940
+5,7950
+6,7960
+7,7970
+8,7980
+9,7990
+NULL,2000
+---- TYPES
+TINYINT,BIGINT
+====
+---- QUERY
+# Test multiple percentile functions mixed with other aggregations
+select tinyint_col, percentile_disc(0.5) within group (order by bigint_col),
+  percentile_disc(0.3) within group (order by int_col),
+  avg(distinct int_col) from alltypesagg group by tinyint_col order by tinyint_col;
+---- RESULTS
+1,4910,291,496
+2,4920,292,497
+3,4930,293,498
+4,4940,294,499
+5,4950,295,500
+6,4960,296,501
+7,4970,297,502
+8,4980,298,503
+9,4990,299,504
+NULL,5000,300,500
+---- TYPES
+TINYINT,BIGINT,INT,DOUBLE
+====
+---- QUERY
+# Test percentile in select list, having clause and order by clause
+select percentile_disc(0.6 + 0.1) within group (order by bigint_col) from alltypesagg
+  group by tinyint_col
+  having percentile_disc(0.5) within group (order by bigint_col) >= 4950
+  order by percentile_disc(0.3) within group (order by bigint_col);
+---- RESULTS
+6950
+6960
+6970
+6980
+6990
+7000
+---- TYPES
+BIGINT
+====
+---- QUERY
+# Test percentile nested in an analytic function
+# This should be tested because analytic exprs have special substitution rules.
+select tinyint_col, sum(percentile_disc(0.5) within group (order by bigint_col)) over
+    (order by tinyint_col) from alltypesagg group by tinyint_col order by tinyint_col;
+---- RESULTS
+1,4910
+2,9830
+3,14760
+4,19700
+5,24650
+6,29610
+7,34580
+8,39560
+9,44550
+NULL,49550
+---- TYPES
+TINYINT,BIGINT
+====
+---- QUERY
+# Test empty table
+select percentile_disc(0.5) within group (order by field) from emptytable;
+---- RESULTS
+'NULL'
+---- TYPES
+STRING
+====
+---- QUERY
+# Test null table
+select percentile_disc(0.5) within group (order by c) from nulltable;
+---- RESULTS
+'NULL'
+---- TYPES
+STRING
+====
+---- QUERY
+# Null percentile value
+select percentile_disc(cast(null as decimal)) within group (order by bigint_col) from
+    alltypesagg group by tinyint_col;
+---- RESULTS
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+---- TYPES
+BIGINT
+====
+---- QUERY
+# Percentile with qualified column names.
+select count(b.smallint_col),
+  percentile_disc(case when b.tinyint_col > 5 then 0.8 else 0.2 end)
+  within group (order by a.int_col)
+  from alltypesagg a inner join alltypesagg b on a.smallint_col=b.smallint_col
+  group by b.tinyint_col order by b.tinyint_col;
+---- RESULTS
+100000,191
+100000,192
+100000,193
+100000,194
+100000,195
+100000,796
+100000,797
+100000,798
+100000,799
+360000,190
+---- TYPES
+BIGINT,INT
+====
+---- QUERY
+# Test percentile with outer join
+select percentile_disc(0.5) within group (order by a.int_col)
+  from alltypesagg a full outer join alltypesagg b on a.smallint_col = b.smallint_col;
+---- RESULTS
+500
+---- TYPES
+INT
+====
+---- QUERY
+# Test percentile in a subquery
+select sum(p) from (select percentile_disc(0.5) within group (order by int_col) p from
+alltypesagg group by tinyint_col) v;
+---- RESULTS
+4955
+---- TYPES
+BIGINT
+====
+---- QUERY
+# Percentile with subquery rewrite
+select percentile_disc(0.5) within group (order by int_col) from alltypesagg where
+  int_col not in (select percentile_disc(0.5) within group (order by int_col)
+    from alltypesagg group by tinyint_col) and
+  tinyint_col = (select percentile_disc(0.1) within group (order by tinyint_col)
+    from alltypesagg);
+---- RESULTS
+501
+---- TYPES
+INT
+====
+---- QUERY
+# in clause subquery rewrite, with constant lhs
+select percentile_disc(0.5) within group (order by int_col) from alltypesagg where
+  500 not in (select percentile_disc(0.5) within group (order by int_col)
+    from alltypesagg group by tinyint_col) and
+  tinyint_col = (select percentile_disc(0.1) within group (order by tinyint_col)
+    from alltypesagg);
+---- RESULTS
+NULL
+---- TYPES
+INT
+====
+---- QUERY
+# correlated subquery
+select count(*) from alltypesagg a where tinyint_col <
+  (select percentile_disc(0.2) within group (order by tinyint_col)
+from alltypesagg where year = a.year);
+---- RESULTS
+1000
+---- TYPES
+BIGINT
+====
+---- QUERY
+# percentile with with clause
+with v as (select percentile_disc(0.5) within group (order by int_col) as a
+  from alltypesagg group by tinyint_col)
+select percentile_disc(0.5) within group (order by a) from v;
+---- RESULTS
+495
+---- TYPES
+INT
+====

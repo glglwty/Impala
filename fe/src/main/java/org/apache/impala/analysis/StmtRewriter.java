@@ -17,8 +17,10 @@
 
 package org.apache.impala.analysis;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 
 import org.apache.impala.analysis.AnalysisContext.AnalysisResult;
@@ -27,10 +29,13 @@ import org.apache.impala.common.AnalysisException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+
 
 import static org.apache.impala.analysis.ToSqlOptions.DEFAULT;
 import static org.apache.impala.analysis.ToSqlOptions.REWRITTEN;
@@ -1093,6 +1098,219 @@ public class StmtRewriter {
       ExprSubstitutionMap smap = new ExprSubstitutionMap();
       smap.put(subquery, newSubquery);
       return expr.substitute(smap, analyzer, false);
+    }
+  }
+
+  public static class PercentileRewriter extends StmtRewriter {
+    private static final String PERCENTILE_VIEW_NAME = "_percentile_view";
+
+    /**
+     * Rewrite 'stmt' containing percentile functions in an equivalent statement using
+     * an inline view.
+     * Percentile functions may exist in: a) the select list, b) the HAVING
+     * clause, and c) the ORDER BY clause. For each percentile expr in these places,
+     * analytic functions row_number() and count() on the order by expr will be added to the
+     * select list of the inline view. The expr in the original query will be replaced with
+     * an aggregation function, selecting the min/max value from the order by expr with
+     * row_number - percentile * count >= 0.
+     * The where clause from the original query will be moved to the inline view. The group
+     * by clause and the limit clause will remain in the original query.
+     * The inline view will redirect all the slotRefs: slotRefs from the original query will
+     * be moved into the select list of inline view. The slotRefs in the original query will
+     * then point to the output columns of the inline view.
+     * The rewrite is in-place. 'stmt' needs to be analyzed beforehand and needs to be
+     * analyzed after the rewrite.
+     * <p>
+     * For example, query:
+     * select percentile_disc(0.5) within group (order by a), b
+     * from tbl where c < 10 group by b
+     * having percentile_disc(0.1) within group (order by a) > 10
+     * <p>
+     * is rewritten into:
+     * SELECT min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_0` >= 0
+     * THEN `_percentile_view`.`_slotRef_1` END), `_percentile_view`.`_slotRef_2`
+     * FROM (SELECT row_number() OVER (PARTITION BY b ORDER BY a ASC) -
+     * count(a) OVER (PARTITION BY b) * 0.5 `_percentile_row_number_diff_0`,
+     * a `_slotRef_1`, b `_slotRef_2`,
+     * row_number() OVER (PARTITION BY b ORDER BY a ASC) -
+     * count(a) OVER (PARTITION BY b) * 0.1 `_percentile_row_number_diff_3`
+     * FROM temp.tbl WHERE c < 10) `_percentile_view`
+     * GROUP BY `_percentile_view`.`_slotRef_2`
+     * HAVING min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_3` >= 0
+     * THEN `_percentile_view`.`_slotRef_1` END) > 10
+     */
+    private static void rewritePercentileSelectStmt(final SelectStmt stmt,
+        Analyzer analyzer) {
+      Preconditions.checkState(stmt.isAnalyzed());
+      Preconditions.checkState(stmt.getAnalyzer().selectBlockContainsPercentile());
+      // The inline view should select:
+      // 1. row_number - percentile * count, for each percentile expr.
+      // 2. Redirecting slotRefs: all the slotRefs from the select list, having clause,
+      //    order by clause and group by clause of the parent select stmt, excluding those
+      //    in the percentile exprs. SlotRefs in percentile exprs might be put into the
+      //    inline view so they shouldn't be redirected.
+      // To gather directing slotRefs, we need to first substitute 1) aliases 2) ordinals
+      // 3) unanalyzed slotRefs in grouping/having/ordering clauses with slotRefs directly
+      // referring to the from clause, so that we will be able to recognize the equivalency
+      // between slotRefs. resultsExprs_ may not refer to the from clause so we need to
+      // substitute with start expanded select list instead.
+      try {
+        if (stmt.hasGroupByClause()) {
+          stmt.substituteOrdinalsAndAliases(stmt.groupingExprs_, "GROUP BY", analyzer,
+              stmt.getStarExpandedSelectList());
+        }
+        if (stmt.hasHavingClause()) {
+          stmt.havingClause_ =
+              stmt.substituteOrdinalOrAlias(stmt.havingClause_, "HAVING", analyzer,
+                  stmt.getStarExpandedSelectList());
+        }
+        if (stmt.hasOrderByClause()) {
+          for (OrderByElement obe : stmt.orderByElements_) {
+            obe.setExpr(stmt.substituteOrdinalOrAlias(obe.getExpr(), "ORDER BY", analyzer,
+                stmt.getStarExpandedSelectList()));
+          }
+        }
+      } catch (AnalysisException e) {
+        // The query has been analyzed so it's impossible for the substitution to fail.
+        throw new IllegalStateException(e);
+      }
+      final ArrayList<SelectListItem> inlineViewSelectList = Lists.newArrayList();
+      // A redirecting slotRef is assigned an alias "_slotRef_[id]" in the inline view. This
+      // map records the mapping from a slotRef in the original query to [id].
+      final HashMap<SlotRef, Integer> inlineViewSlotRefs = Maps.newHashMap();
+      // This function takes an expr in the original query and returns the substituted expr
+      // that should be in the rewritten parent query. Necessary exprs are added to the
+      // select list of the inline view along the way.
+      final Function<Expr, Expr> toParentExpr = new Function<Expr, Expr>() {
+        @Override
+        public Expr apply(Expr expr) {
+          final String redirectAliasPrefix = "_slotRef_";
+          if (expr instanceof SlotRef) {
+            // Populate and substitute redirecting slotRefs.
+            Integer id = inlineViewSlotRefs.get(expr);
+            if (id == null) {
+              id = inlineViewSelectList.size();
+              inlineViewSlotRefs.put((SlotRef) expr, id);
+              inlineViewSelectList.add(
+                  new SelectListItem(expr.clone().reset(), redirectAliasPrefix + id));
+            }
+            return new SlotRef(
+                Lists.newArrayList(PERCENTILE_VIEW_NAME, redirectAliasPrefix + id));
+          } else if (expr instanceof PercentileAggExpr) {
+            return rewritePercentileExpr((PercentileAggExpr) expr, stmt.groupingExprs_,
+                inlineViewSelectList, this);
+          } else {
+            // null indicates that the expr is not substituted.
+            return null;
+          }
+        }
+      };
+      for (SelectListItem item : stmt.selectList_.getItems()) {
+        if (item.getExpr() != null) {
+          item.setExpr(item.getExpr().substituteImpl(toParentExpr));
+        }
+      }
+      if (stmt.hasHavingClause()) {
+        stmt.havingClause_ = stmt.havingClause_.substituteImpl(toParentExpr);
+      }
+      if (stmt.hasOrderByClause()) {
+        for (OrderByElement obe : stmt.orderByElements_) {
+          obe.setExpr(obe.getExpr().substituteImpl(toParentExpr));
+        }
+      }
+      // Group by clause doesn't have percentile exprs. We only use toParentExpr() to
+      // substitute the redirecting slotRefs.
+      if (stmt.hasGroupByClause()) {
+        for (int i = 0; i < stmt.groupingExprs_.size(); i++) {
+          stmt.groupingExprs_
+              .set(i, stmt.groupingExprs_.get(i).substituteImpl(toParentExpr));
+        }
+      }
+      // Where clause filters the rows before aggregation so it should be put in the inline
+      // view.
+      SelectStmt inlineViewStmt =
+          new SelectStmt(new SelectList(inlineViewSelectList), stmt.fromClause_.clone(),
+              stmt.whereClause_, null, null, null, null);
+      InlineViewRef inlineViewRef =
+          new InlineViewRef(PERCENTILE_VIEW_NAME, inlineViewStmt,
+              (TableSampleClause) null);
+      stmt.fromClause_ =
+          new FromClause(Collections.<TableRef>singletonList(inlineViewRef));
+      stmt.whereClause_ = null;
+    }
+
+    /**
+     * Rewrite the percentile expr 'e'. Two new exprs are generated (based on the
+     * transformation described in rewritePercentileSelectStmt()):
+     * 1. One replacing 'e' in the select list of the original statement. This expr is
+     * returned by this function.
+     * 2. One added to the select list of the generated inline view. This expr is added to
+     * 'inlineViewSelectList'.
+     * Most slotRefs in the original percentile expr are put into the inline view and they are
+     * left unchanged. The slotRefs in the order by expr need to be put into the parent
+     * query, and they need to be replaced by the redirecting slotRefs returned by
+     * 'toRedirectSlotRef' function.
+     */
+    private static Expr rewritePercentileExpr(PercentileAggExpr e,
+        List<Expr> groupingExprs, List<SelectListItem> inlineViewSelectList,
+        Function<Expr, Expr> toRedirectSlotRef) {
+      OrderByElement obe = new OrderByElement(e.orderByExpr().clone(), e.isAsc(), false);
+      // row_number() over (order by col)
+      FunctionCallExpr rowNumberCall =
+          new FunctionCallExpr("row_number", Collections.<Expr>emptyList());
+      rowNumberCall.setIsAnalyticFnCall(true);
+      // count(col) over()
+      FunctionCallExpr countCall =
+          new FunctionCallExpr("count", Lists.newArrayList(e.orderByExpr().clone()));
+      countCall.setIsAnalyticFnCall(true);
+      AnalyticExpr rowNumberAnalyticExpr = new AnalyticExpr(rowNumberCall,
+          groupingExprs == null ? null : Expr.cloneList(groupingExprs),
+          Collections.singletonList(obe), null);
+      AnalyticExpr countAnalyticExpr = new AnalyticExpr(countCall,
+          groupingExprs == null ? null : Expr.cloneList(groupingExprs),
+          Collections.<OrderByElement>emptyList(), null);
+      String inlineViewColName =
+          "_percentile_row_number_diff_" + inlineViewSelectList.size();
+      // Transform out-of-bounds percentile values into NULL.
+      Expr checkedPercentile;
+      if (e.percentileExpr() instanceof NumericLiteral) {
+        // Avoid checking literals at runtime.
+        BigDecimal value = ((NumericLiteral) e.percentileExpr()).getValue();
+        if (value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(BigDecimal.ONE) > 0) {
+          checkedPercentile = new NullLiteral();
+        } else {
+          checkedPercentile = e.percentileExpr();
+        }
+      } else {
+        checkedPercentile = new CaseExpr(null, Collections.singletonList(
+            new CaseWhenClause(new CompoundPredicate(CompoundPredicate.Operator.AND,
+                new BinaryPredicate(BinaryPredicate.Operator.GE,
+                    e.percentileExpr().clone(), new NumericLiteral(BigDecimal.ZERO)),
+                new BinaryPredicate(BinaryPredicate.Operator.LE,
+                    e.percentileExpr().clone(), new NumericLiteral(BigDecimal.ONE))),
+                e.percentileExpr().clone())), new NullLiteral());
+      }
+      // _percentile_row_number_diff_k = row_number - percentile * count
+      inlineViewSelectList.add(new SelectListItem(
+          new ArithmeticExpr(ArithmeticExpr.Operator.SUBTRACT, rowNumberAnalyticExpr,
+              new ArithmeticExpr(ArithmeticExpr.Operator.MULTIPLY, countAnalyticExpr,
+                  checkedPercentile)), inlineViewColName));
+      SlotRef inlineViewSlotRef =
+          new SlotRef(Lists.newArrayList(PERCENTILE_VIEW_NAME, inlineViewColName));
+      // min(case when _percentile_row_number_diff_k >= 0 then col end)
+      return new FunctionCallExpr(e.isAsc() ? "min" : "max",
+          Collections.<Expr>singletonList(new CaseExpr(null, Collections.singletonList(
+              new CaseWhenClause(
+                  new BinaryPredicate(BinaryPredicate.Operator.GE, inlineViewSlotRef,
+                      new NumericLiteral(BigDecimal.ZERO)),
+                  e.orderByExpr().substituteImpl(toRedirectSlotRef))), null)));
+    }
+
+    @Override
+    protected void rewriteSelectStmtHook(SelectStmt stmt, Analyzer analyzer) {
+      if (analyzer.selectBlockContainsPercentile()) {
+        rewritePercentileSelectStmt(stmt, analyzer);
+      }
     }
   }
 }
