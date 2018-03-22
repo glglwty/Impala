@@ -784,7 +784,7 @@ public class AnalyticExpr extends Expr {
   /**
    * Keep fnCall_, partitionExprs_ and orderByElements_ in sync with children_.
    */
-  private void syncWithChildren() {
+  void syncWithChildren() {
     int numArgs = fnCall_.getChildren().size();
     for (int i = 0; i < numArgs; ++i) {
       fnCall_.setChild(i, getChild(i));
@@ -829,9 +829,8 @@ public class AnalyticExpr extends Expr {
     syncWithChildren();
   }
 
-  @Override
-  protected Expr substituteImpl(ExprSubstitutionMap smap, Analyzer analyzer) {
-    Expr e = super.substituteImpl(smap, analyzer);
+  protected Expr substituteImpl(com.google.common.base.Function<Expr, Expr> f) {
+    Expr e = super.substituteImpl(f);
     if (!(e instanceof AnalyticExpr)) return e;
     // Re-sync state after possible child substitution.
     ((AnalyticExpr) e).syncWithChildren();

@@ -44,16 +44,16 @@ public class BetweenToCompoundRule implements ExprRewriteRule {
     if (bp.isNotBetween()) {
       // Rewrite into disjunction.
       Predicate lower = new BinaryPredicate(BinaryPredicate.Operator.LT,
-          bp.getChild(0), bp.getChild(1));
+          bp.getChild(0).clone(), bp.getChild(1));
       Predicate upper = new BinaryPredicate(BinaryPredicate.Operator.GT,
-          bp.getChild(0), bp.getChild(2));
+          bp.getChild(0).clone(), bp.getChild(2));
       result = new CompoundPredicate(CompoundPredicate.Operator.OR, lower, upper);
     } else {
       // Rewrite into conjunction.
       Predicate lower = new BinaryPredicate(BinaryPredicate.Operator.GE,
-          bp.getChild(0), bp.getChild(1));
+          bp.getChild(0).clone(), bp.getChild(1));
       Predicate upper = new BinaryPredicate(BinaryPredicate.Operator.LE,
-          bp.getChild(0), bp.getChild(2));
+          bp.getChild(0).clone(), bp.getChild(2));
       result = new CompoundPredicate(CompoundPredicate.Operator.AND, lower, upper);
     }
     return result;
