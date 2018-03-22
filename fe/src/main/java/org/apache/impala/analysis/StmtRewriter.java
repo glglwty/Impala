@@ -17,26 +17,29 @@
 
 package org.apache.impala.analysis;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 
 import org.apache.impala.analysis.AnalysisContext.AnalysisResult;
 import org.apache.impala.analysis.UnionStmt.UnionOperand;
 import org.apache.impala.common.AnalysisException;
-import org.apache.impala.common.ColumnAliasGenerator;
-import org.apache.impala.common.TableAliasGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+
 
 /**
  * Class representing a statement rewriter. A statement rewriter performs subquery
- * unnesting on an analyzed parse tree.
+ * unnesting and percentile function rewriting on an analyzed parse tree.
  * TODO: Now that we have a nested-loop join supporting all join modes we could
  * allow more rewrites, although it is not clear we would always want to.
  */
@@ -78,7 +81,7 @@ public class StmtRewriter {
   public static void rewriteQueryStatement(QueryStmt stmt, Analyzer analyzer)
       throws AnalysisException {
     Preconditions.checkNotNull(stmt);
-    Preconditions.checkNotNull(stmt.isAnalyzed());
+    Preconditions.checkState(stmt.isAnalyzed());
     if (stmt instanceof SelectStmt) {
       rewriteSelectStatement((SelectStmt)stmt, analyzer);
     } else if (stmt instanceof UnionStmt) {
@@ -90,9 +93,10 @@ public class StmtRewriter {
   }
 
   /**
-   * Rewrite all the subqueries of a SelectStmt in place. Subqueries
-   * are currently supported in FROM and WHERE clauses. The rewrite is performed in
-   * place and not in a clone of SelectStmt because it requires the stmt to be analyzed.
+   * Rewrite all the subqueries and percentile functions of a SelectStmt in place.
+   * Subqueries are currently supported in FROM and WHERE clauses. The rewrite is
+   * performed in place and not in a clone of SelectStmt because it requires the stmt to
+   * be analyzed.
    */
   private static void rewriteSelectStatement(SelectStmt stmt, Analyzer analyzer)
       throws AnalysisException {
@@ -114,6 +118,7 @@ public class StmtRewriter {
       }
       rewriteWhereClauseSubqueries(stmt, analyzer);
     }
+    if (analyzer.topStmtContainsPercentile()) rewritePercentileSelectStmt(stmt, analyzer);
     stmt.sqlString_ = null;
     if (LOG.isTraceEnabled()) LOG.trace("rewritten stmt: " + stmt.toSql());
   }
@@ -1065,5 +1070,201 @@ public class StmtRewriter {
     }
     smap.put(subquery, subquerySubstitute);
     return exprWithSubquery.substitute(smap, analyzer, false);
+  }
+
+  private static final String PERCENTILE_SUBQUERY_NAME = "_percentile_view";
+
+  /**
+   * Rewrite 'stmt' containing percentile functions in an equivalent statement using
+   * subqueries.
+   * Percentile functions may exist in: a) the select list, b) the HAVING
+   * clause, and c) the ORDER BY clause. For each percentile expr in these places,
+   * analytic functions row_number() and count() on the order by expr will be added to
+   * the select list of the subquery. The expr in the original query will be replaced with
+   * an aggregation function, selecting the min/max value from the order by expr with
+   * row_number - percentile * count >= 0.
+   * The where clause from the original query will be moved to the subquery. The group by
+   * clause and the limit clause will remain in the original query.
+   * The subquery will redirect all the slotRefs: slotRefs from the original query will be
+   * moved into the select list of subquery. The slotRefs in the original query will then
+   * point to the output columns of the subquery.
+   * The rewrite is in-place. 'stmt' needs to be analyzed beforehand and needs to be
+   * analyzed after the rewrite.
+   *
+   * For example, query:
+   * select percentile_disc(0.5) within group (order by a), b
+   * from tbl where c < 10 group by b
+   * having percentile_disc(0.1) within group (order by a) > 10
+   *
+   * is rewritten into:
+   * SELECT min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_0` >= 0
+   *            THEN `_percentile_view`.`_slotRef_1` END), `_percentile_view`.`_slotRef_2`
+   * FROM (SELECT row_number() OVER (PARTITION BY b ORDER BY a ASC) -
+   *                count(a) OVER (PARTITION BY b) * 0.5 `_percentile_row_number_diff_0`,
+   *              a `_slotRef_1`, b `_slotRef_2`,
+   *              row_number() OVER (PARTITION BY b ORDER BY a ASC) -
+   *                count(a) OVER (PARTITION BY b) * 0.1 `_percentile_row_number_diff_3`
+   *       FROM temp.tbl WHERE c < 10) `_percentile_view`
+   * GROUP BY `_percentile_view`.`_slotRef_2`
+   * HAVING min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_3` >= 0
+   *                 THEN `_percentile_view`.`_slotRef_1` END) > 10
+   */
+  private static void rewritePercentileSelectStmt(final SelectStmt stmt,
+      Analyzer analyzer) {
+    Preconditions.checkState(stmt.isAnalyzed());
+    Preconditions.checkState(stmt.getAnalyzer().topStmtContainsPercentile());
+    // Replace aliases and ordinals with slotRefs directly referring to the from clause.
+    try {
+      if (stmt.hasGroupByClause()) {
+        stmt.substituteOrdinalsAndAliases(stmt.groupingExprs_,
+            "GROUP BY", analyzer, stmt.getStarExpandedSelectList());
+      }
+      if (stmt.hasHavingClause()) {
+        stmt.havingClause_ = stmt.substituteOrdinalOrAlias(stmt.havingClause_,
+            "HAVING", analyzer, stmt.getStarExpandedSelectList());
+      }
+      if (stmt.hasOrderByClause()) {
+        for (OrderByElement obe : stmt.orderByElements_) {
+          obe.setExpr(stmt.substituteOrdinalOrAlias(obe.getExpr(),
+              "ORDER BY", analyzer, stmt.getStarExpandedSelectList()));
+        }
+      }
+    } catch (AnalysisException e) {
+      // The query has been analyzed so it's impossible for the substitution to fail.
+      throw new IllegalStateException(e);
+    }
+    // The subquery should select:
+    // 1. row_number - percentile * count, for each percentile expr.
+    // 2. Redirecting slotRefs: all the slotRefs from the select list, having clause,
+    //    order by clause and group by clause of the parent select stmt, excluding those
+    //    in the percentile exprs. Those slotRefs
+    final ArrayList<SelectListItem> subQuerySelectList = Lists.newArrayList();
+    // A redirecting slotRef is assigned an alias "_slotRef_[id]" in the subquery. This
+    // map records the mapping from slotRef to [id].
+    final HashMap<SlotRef, Integer> subQuerySlotRefs = Maps.newHashMap();
+    // This function accepts an expr in the original query and returns the substituted
+    // expr that should be in the rewritten parent query. Necessary exprs are added to
+    // the select list of the subquery along the way.
+    final Function<Expr, Expr> toParentExpr = new Function<Expr, Expr>() {
+      @Override
+      public Expr apply(Expr expr) {
+        final String redirectAliasPrefix = "_slotRef_";
+        if (expr instanceof SlotRef) {
+          // Populate and substitute redirecting slotRefs.
+          // Sql strings of the slotRefs are used for deduplication.
+          Integer count = subQuerySlotRefs.get(expr);
+          if (count == null) {
+            count = subQuerySelectList.size();
+            subQuerySlotRefs.put((SlotRef)expr, count);
+            subQuerySelectList.add(new SelectListItem(expr.clone().reset(),
+                redirectAliasPrefix + count));
+          }
+          return new SlotRef(Lists.newArrayList(PERCENTILE_SUBQUERY_NAME,
+              redirectAliasPrefix+ count));
+        } else if (expr instanceof PercentileAggExpr) {
+          return rewritePercentileExpr((PercentileAggExpr) expr, stmt.groupingExprs_,
+              subQuerySelectList, this);
+        } else {
+          // null indicates that the expr is not substituted.
+          return null;
+        }
+      }
+    };
+    for (SelectListItem item : stmt.selectList_.getItems()) {
+      if (item.getExpr() != null) {
+        item.setExpr(item.getExpr().substituteImpl(toParentExpr));
+      }
+    }
+    if (stmt.hasHavingClause()) {
+      stmt.havingClause_ = stmt.havingClause_.substituteImpl(toParentExpr);
+    }
+    if (stmt.hasOrderByClause()) {
+      for (OrderByElement obe : stmt.orderByElements_) {
+        obe.setExpr(obe.getExpr().substituteImpl(toParentExpr));
+      }
+    }
+    // Group by clause doesn't have percentile exprs. We only use toParentExpr to
+    // substitute redirecting slotRefs.
+    if (stmt.hasGroupByClause()) {
+      for (int i = 0; i < stmt.groupingExprs_.size(); i++) {
+        stmt.groupingExprs_
+            .set(i, stmt.groupingExprs_.get(i).substituteImpl(toParentExpr));
+      }
+    }
+    // Where clause filters the rows before aggregation so it should be put in the
+    // subquery.
+    SelectStmt subQuery =
+        new SelectStmt(new SelectList(subQuerySelectList), stmt.fromClause_.clone(),
+            stmt.whereClause_, null, null, null, null);
+    InlineViewRef inlineViewRef =
+        new InlineViewRef(PERCENTILE_SUBQUERY_NAME, subQuery, (TableSampleClause) null);
+    stmt.fromClause_ = new FromClause(Collections.<TableRef>singletonList(inlineViewRef));
+    stmt.whereClause_ = null;
+  }
+
+  /**
+   * Rewrite the percentile expr 'e'. Two new exprs are generated (based on the
+   * transformation described in rewritePercentileSelectStmt()):
+   * 1. One replacing 'e' in the select list of the original statement. This expr is
+   *    returned by this function.
+   * 2. One added to the select list of the generated subquery. This expr is added to
+   *    'subQuerySelectList'.
+   * Most slotRefs in the original percentile expr are put into the subquery and they are
+   * left unchanged. The slotRefs in the order by expr need to be put into the parent
+   * query, and they need to be replaced by the redirecting slotRefs returned by
+   * 'toRedirectSlotRef' function.
+   */
+  private static Expr rewritePercentileExpr(PercentileAggExpr e,
+      ArrayList<Expr> groupingExprs, ArrayList<SelectListItem> subQuerySelectList,
+      Function<Expr, Expr> toRedirectSlotRef) {
+    OrderByElement obe = new OrderByElement(e.orderByExpr().clone(), e.isAsc(), false);
+    // row_number() over (order by col)
+    FunctionCallExpr rowNumberCall =
+        new FunctionCallExpr("row_number", Collections.<Expr>emptyList());
+    rowNumberCall.setIsAnalyticFnCall(true);
+    // count(col) over()
+    FunctionCallExpr countCall =
+        new FunctionCallExpr("count", Lists.newArrayList(e.orderByExpr().clone()));
+    countCall.setIsAnalyticFnCall(true);
+    AnalyticExpr rowNumberAnalyticExpr = new AnalyticExpr(rowNumberCall,
+        groupingExprs == null ? null : Expr.cloneList(groupingExprs),
+        Collections.singletonList(obe), null);
+    AnalyticExpr countAnalyticExpr = new AnalyticExpr(countCall,
+        groupingExprs == null ? null : Expr.cloneList(groupingExprs),
+        Collections.<OrderByElement>emptyList(), null);
+    String subQueryColName = "_percentile_row_number_diff_" + subQuerySelectList.size();
+    // Transform out-of-bounds percentile values into NULL.
+    Expr checkedPercentile;
+    if (e.percentileExpr() instanceof NumericLiteral) {
+      // Avoid checking literals at runtime.
+      BigDecimal value = ((NumericLiteral) e.percentileExpr()).getValue();
+      if (value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(BigDecimal.ONE) > 0) {
+        checkedPercentile = new NullLiteral();
+      } else {
+        checkedPercentile = e.percentileExpr();
+      }
+    } else {
+      checkedPercentile = new CaseExpr(null, Collections.singletonList(new CaseWhenClause(
+          new CompoundPredicate(CompoundPredicate.Operator.AND,
+              new BinaryPredicate(BinaryPredicate.Operator.GE, e.percentileExpr().clone(),
+                  new NumericLiteral(BigDecimal.ZERO)),
+              new BinaryPredicate(BinaryPredicate.Operator.LE, e.percentileExpr().clone(),
+                  new NumericLiteral(BigDecimal.ONE))), e.percentileExpr().clone())),
+          new NullLiteral());
+    }
+    // _percentile_row_number_diff_k = row_number - percentile * count
+    subQuerySelectList.add(new SelectListItem(
+        new ArithmeticExpr(ArithmeticExpr.Operator.SUBTRACT, rowNumberAnalyticExpr,
+            new ArithmeticExpr(ArithmeticExpr.Operator.MULTIPLY, countAnalyticExpr,
+                checkedPercentile)), subQueryColName));
+    SlotRef subQuerySlotRef =
+        new SlotRef(Lists.newArrayList(PERCENTILE_SUBQUERY_NAME, subQueryColName));
+    // min(case when _percentile_row_number_diff_k >= 0 then col end)
+    return new FunctionCallExpr(e.isAsc() ? "min" : "max",
+        Collections.<Expr>singletonList(new CaseExpr(null, Collections.singletonList(
+            new CaseWhenClause(
+                new BinaryPredicate(BinaryPredicate.Operator.GE, subQuerySlotRef,
+                    new NumericLiteral(BigDecimal.ZERO)),
+                e.orderByExpr().substituteImpl(toRedirectSlotRef))), null)));
   }
 }

@@ -53,11 +53,15 @@ public class SelectStmt extends QueryStmt {
   // BEGIN: Members that need to be reset()
 
   protected SelectList selectList_;
-  protected final ArrayList<String> colLabels_; // lower case column labels
-  protected final FromClause fromClause_;
+  protected ArrayList<String> colLabels_; // lower case column labels
+  protected FromClause fromClause_;
   protected Expr whereClause_;
   protected ArrayList<Expr> groupingExprs_;
   protected Expr havingClause_;  // original having clause
+
+  // Star-expanded select list. This is similar to resultExprs_ except that all the
+  // slotRefs directly refer to table(s) in the from clause.
+  private ArrayList<Expr> starExpandedSelectList_ = null;
 
   // havingClause with aliases and agg output resolved
   private Expr havingPred_;
@@ -194,6 +198,8 @@ public class SelectStmt extends QueryStmt {
         colLabels_.add(label);
       }
     }
+
+    starExpandedSelectList_ = Expr.cloneList(resultExprs_);
 
     // Star exprs only expand to the scalar-typed columns/fields, so
     // the resultExprs_ could be empty.
@@ -547,7 +553,8 @@ public class SelectStmt extends QueryStmt {
         throw new AnalysisException(
             "Subqueries are not supported in the HAVING clause.");
       }
-      havingPred_ = substituteOrdinalOrAlias(havingClause_, "HAVING", analyzer);
+      havingPred_ = substituteOrdinalOrAlias(havingClause_, "HAVING", analyzer,
+          resultExprs_);
       // can't contain analytic exprs
       Expr analyticExpr = havingPred_.findFirstOf(AnalyticExpr.class);
       if (analyticExpr != null) {
@@ -616,7 +623,7 @@ public class SelectStmt extends QueryStmt {
       // exprs during analysis (in case we need to print them later)
       groupingExprsCopy = Expr.cloneList(groupingExprs_);
 
-      substituteOrdinalsAndAliases(groupingExprsCopy, "GROUP BY", analyzer);
+      substituteOrdinalsAndAliases(groupingExprsCopy, "GROUP BY", analyzer, resultExprs_);
 
       for (int i = 0; i < groupingExprsCopy.size(); ++i) {
         groupingExprsCopy.get(i).analyze(analyzer);
@@ -757,6 +764,18 @@ public class SelectStmt extends QueryStmt {
             "HAVING clause not produced by aggregation output "
             + "(missing from GROUP BY clause?): "
             + havingClause_.toSql());
+      }
+    }
+
+    for (FunctionCallExpr e : aggExprs) {
+      if (e instanceof PercentileAggExpr) {
+        // Check if the percentile value is bound by grouping expr
+        Expr substitutedPercentile = ((PercentileAggExpr) e).percentileExpr().
+            substitute(finalAggInfo.getOutputGroupingExprSmap(), analyzer, true);
+        if (!substitutedPercentile.isBound(finalAggInfo.getOutputTupleId())) {
+          throw new AnalysisException("Percentile value is not produced by aggregation " +
+              "output (missing from GROUP BY clause?): " + e.toSql());
+        }
       }
     }
   }
@@ -1096,5 +1115,9 @@ public class SelectStmt extends QueryStmt {
     if (hasAggInfo() && !hasGroupByClause() && !selectList_.isDistinct()) return true;
     // In all other cases, return false.
     return false;
+  }
+
+  public ArrayList<Expr> getStarExpandedSelectList() {
+    return starExpandedSelectList_;
   }
 }

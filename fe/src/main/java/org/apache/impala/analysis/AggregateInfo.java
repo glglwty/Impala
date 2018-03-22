@@ -94,6 +94,10 @@ public class AggregateInfo extends AggregateInfoBase {
   // in the output tuple.
   protected ExprSubstitutionMap outputTupleSmap_ = new ExprSubstitutionMap();
 
+  // Map from all grouping exprs to a SlotRef referencing the corresp. slot in the output
+  // tuple. It's useful for checking whether an expr is bounded by grouping exprs.
+  private ExprSubstitutionMap outputGroupingExprSmap_ = new ExprSubstitutionMap();
+
   // Map from slots of outputTupleSmap_ to the corresponding slot in
   // intermediateTupleSmap_.
   protected ExprSubstitutionMap outputToIntermediateTupleSmap_ =
@@ -273,6 +277,9 @@ public class AggregateInfo extends AggregateInfoBase {
   public boolean isDistinctAgg() { return secondPhaseDistinctAggInfo_ != null; }
   public ExprSubstitutionMap getIntermediateSmap() { return intermediateTupleSmap_; }
   public ExprSubstitutionMap getOutputSmap() { return outputTupleSmap_; }
+  public ExprSubstitutionMap getOutputGroupingExprSmap() {
+    return outputGroupingExprSmap_;
+  }
   public ExprSubstitutionMap getOutputToIntermediateSmap() {
     return outputToIntermediateTupleSmap_;
   }
@@ -567,6 +574,10 @@ public class AggregateInfo extends AggregateInfoBase {
         groupingExprs_.size() + aggregateExprs_.size());
     exprs.addAll(groupingExprs_);
     exprs.addAll(aggregateExprs_);
+    for (int i = 0; i < groupingExprs_.size(); i ++) {
+      outputGroupingExprSmap_.put(exprs.get(i).clone(),
+          new SlotRef(outputTupleDesc_.getSlots().get(i)));
+    }
     for (int i = 0; i < exprs.size(); ++i) {
       outputTupleSmap_.put(exprs.get(i).clone(),
           new SlotRef(outputTupleDesc_.getSlots().get(i)));

@@ -143,6 +143,24 @@ public class AggregateFunction extends Function {
     return fn;
   }
 
+  /**
+   * Create an aggregation function without a BE implementation, only for FE rewriting.
+   */
+  static AggregateFunction createLogicalBuiltin(Db db, String name,
+      ArrayList<Type> argTypes, Type retType, boolean ignoresDistinct,
+      boolean isAnalyticFn, boolean returnsNonNullOnEmpty) {
+    AggregateFunction fn = new AggregateFunction(new FunctionName(db.getName(), name),
+        argTypes, retType, false);
+    fn.setBinaryType(TFunctionBinaryType.BUILTIN);
+    fn.intermediateType_ = Type.NULL;
+    fn.ignoresDistinct_ = ignoresDistinct;
+    fn.isAnalyticFn_ = isAnalyticFn;
+    fn.isAggregateFn_ = true;
+    fn.returnsNonNullOnEmpty_ = returnsNonNullOnEmpty;
+    fn.setIsPersistent(true);
+    return fn;
+  }
+
   public static AggregateFunction createAnalyticBuiltin(Db db, String name,
       List<Type> argTypes, Type retType, Type intermediateType) {
     return createAnalyticBuiltin(db, name, argTypes, retType, intermediateType, null,

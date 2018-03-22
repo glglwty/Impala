@@ -176,9 +176,16 @@ public class Analyzer {
   // except its own. Therefore, only a single semi-joined tuple can be visible at a time.
   private TupleId visibleSemiJoinedTupleId_ = null;
 
+  // If true, this stmt has percentile function outside of inline views.
+  private boolean containsPercentile = false;
+
   public void setIsSubquery() {
     isSubquery_ = true;
     globalState_.containsSubquery = true;
+  }
+  void setContainsPercentile() {
+    containsPercentile = true;
+    globalState_.containsPercentile = true;
   }
   public boolean setHasPlanHints() { return globalState_.hasPlanHints = true; }
   public boolean hasPlanHints() { return globalState_.hasPlanHints; }
@@ -204,6 +211,9 @@ public class Analyzer {
 
     // Indicates whether the query has plan hints.
     public boolean hasPlanHints = false;
+
+    // True if there is a percentile function in the query.
+    boolean containsPercentile = false;
 
     // True if at least one of the analyzers belongs to a subquery.
     public boolean containsSubquery = false;
@@ -339,6 +349,9 @@ public class Analyzer {
   };
 
   private final GlobalState globalState_;
+
+  boolean topStmtContainsPercentile() { return containsPercentile; }
+  boolean queryContainsPercentile() { return globalState_.containsPercentile; }
 
   public boolean containsSubquery() { return globalState_.containsSubquery; }
 
