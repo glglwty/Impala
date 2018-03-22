@@ -18,6 +18,7 @@
 package org.apache.impala.analysis;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -25,6 +26,7 @@ import java.util.List;
 
 import org.apache.impala.analysis.AnalysisContext.AnalysisResult;
 import org.apache.impala.analysis.UnionStmt.UnionOperand;
+import org.apache.impala.catalog.Type;
 import org.apache.impala.common.AnalysisException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -1169,13 +1171,20 @@ public class StmtRewriter {
           }
           return new SlotRef(Lists.newArrayList(PERCENTILE_VIEW_NAME,
               redirectAliasPrefix+ id));
-        } else if (expr instanceof PercentileAggExpr) {
+        }
+        if (expr instanceof FunctionCallExpr) {
+          FunctionCallExpr e = (FunctionCallExpr) expr;
+          if (e.getFnName().toString().equalsIgnoreCase("median")) {
+            expr = new PercentileAggExpr(new NumericLiteral(BigDecimal.valueOf(0.5)),
+                expr.getChild(0), false, true);
+          }
+        }
+        if (expr instanceof PercentileAggExpr) {
           return rewritePercentileExpr((PercentileAggExpr) expr, stmt.groupingExprs_,
               inlineViewSelectList, this);
-        } else {
-          // null indicates that the expr is not substituted.
-          return null;
         }
+        // null indicates that the expr is not substituted.
+        return null;
       }
     };
     for (SelectListItem item : stmt.selectList_.getItems()) {
@@ -1240,6 +1249,21 @@ public class StmtRewriter {
     AnalyticExpr countAnalyticExpr = new AnalyticExpr(countCall,
         groupingExprs == null ? null : Expr.cloneList(groupingExprs),
         Collections.<OrderByElement>emptyList(), null);
+    Expr numerator;
+    Expr denominator;
+    if (e.isDisc()) {
+      // For disc percentile = row_number / count
+      numerator = rowNumberAnalyticExpr;
+      denominator = countAnalyticExpr;
+    } else {
+      // For cont percentile = (row_number - 1) / (count - 1)
+      numerator =
+          new ArithmeticExpr(ArithmeticExpr.Operator.SUBTRACT, rowNumberAnalyticExpr,
+              new NumericLiteral(BigInteger.ONE, Type.BIGINT));
+      denominator =
+          new ArithmeticExpr(ArithmeticExpr.Operator.SUBTRACT, countAnalyticExpr,
+              new NumericLiteral(BigInteger.ONE, Type.BIGINT));
+    }
     String inlineViewColName = "_percentile_row_number_diff_" + inlineViewSelectList.size();
     // Transform out-of-bounds percentile values into NULL.
     Expr checkedPercentile;
@@ -1262,17 +1286,22 @@ public class StmtRewriter {
     }
     // _percentile_row_number_diff_k = row_number - percentile * count
     inlineViewSelectList.add(new SelectListItem(
-        new ArithmeticExpr(ArithmeticExpr.Operator.SUBTRACT, rowNumberAnalyticExpr,
-            new ArithmeticExpr(ArithmeticExpr.Operator.MULTIPLY, countAnalyticExpr,
+        new ArithmeticExpr(ArithmeticExpr.Operator.SUBTRACT, numerator,
+            new ArithmeticExpr(ArithmeticExpr.Operator.MULTIPLY, denominator,
                 checkedPercentile)), inlineViewColName));
-    SlotRef inlineViewSlotRef =
+    SlotRef childSlotRef =
         new SlotRef(Lists.newArrayList(PERCENTILE_VIEW_NAME, inlineViewColName));
-    // min(case when _percentile_row_number_diff_k >= 0 then col end)
-    return new FunctionCallExpr(e.isAsc() ? "min" : "max",
-        Collections.<Expr>singletonList(new CaseExpr(null, Collections.singletonList(
-            new CaseWhenClause(
-                new BinaryPredicate(BinaryPredicate.Operator.GE, inlineViewSlotRef,
-                    new NumericLiteral(BigDecimal.ZERO)),
-                e.orderByExpr().substituteImpl(toRedirectSlotRef))), null)));
+    if (e.isDisc()) {
+      // min(case when _percentile_row_number_diff_k >= 0 then col end)
+      return new FunctionCallExpr(e.isAsc() ? "min" : "max",
+          Collections.<Expr>singletonList(new CaseExpr(null, Collections.singletonList(
+              new CaseWhenClause(
+                  new BinaryPredicate(BinaryPredicate.Operator.GE, childSlotRef,
+                      new NumericLiteral(BigDecimal.ZERO)),
+                  e.orderByExpr().substituteImpl(toRedirectSlotRef))), null)));
+    } else {
+      return new FunctionCallExpr("_percentile_cont_interpolation", Lists
+          .newArrayList(e.orderByExpr().substituteImpl(toRedirectSlotRef), childSlotRef));
+    }
   }
 }

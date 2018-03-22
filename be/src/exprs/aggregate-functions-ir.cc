@@ -2043,6 +2043,89 @@ void AggregateFunctions::OffsetFnUpdate(FunctionContext* ctx, const T& src,
   UpdateVal(ctx, src, dst);
 }
 
+/// This struct records the ordering expr values closest to the desired row_number.
+/// The ordering expr value with the minimum non-negative row_number_diff and with the
+/// maximum negative row_number_diff is recorded, where
+/// row_number_diff = row_number - 1 - percentile * (count - 1).
+struct __attribute__ ((__packed__)) PercentileContInterpolationState {
+  // The ordering expr value with the minimum non-negative row_number_diff
+  double min_non_neg_val;
+  // The ordering expr with the maximum negative row_number_diff
+  double max_neg_val;
+  // The minimum non-negative row_number_diff. Infinity indicates that such value hasn't
+  // been found.
+  double min_non_neg_diff;
+  // The maximum negative row_number_diff. -infinity indicates that such value hasn't been
+  // found.
+  double max_neg_diff;
+};
+static_assert(alignof(PercentileContInterpolationState) == 1, "The intermediate type of "
+    "an aggregation function shouldn't have an alignment requirement.");
+
+void AggregateFunctions::PercentileContInterpolationInit(FunctionContext *ctx,
+    StringVal *dst) {
+  DCHECK(dst->len == sizeof(PercentileContInterpolationState));
+  auto state = reinterpret_cast<PercentileContInterpolationState *>(dst->ptr);
+  state->min_non_neg_diff = std::numeric_limits<double>::infinity();
+  static_assert(numeric_limits<double>::is_iec559, "-infinity assumes IEEE754.");
+  state->max_neg_diff = - numeric_limits<double>::infinity();
+}
+
+void AggregateFunctions::PercentileContInterpolationUpdate(FunctionContext *ctx,
+    const DoubleVal& src, const DoubleVal& row_number_diff, StringVal *dst) {
+  DCHECK(dst->len == sizeof(PercentileContInterpolationState));
+  if (src.is_null || row_number_diff.is_null) return;
+  auto state = reinterpret_cast<PercentileContInterpolationState *>(dst->ptr);
+  if (row_number_diff.val >= 0) {
+    if (state->min_non_neg_diff > row_number_diff.val) {
+      state->min_non_neg_diff = row_number_diff.val;
+      state->min_non_neg_val = src.val;
+    }
+  } else if (state->max_neg_diff < row_number_diff.val) {
+    state->max_neg_diff = row_number_diff.val;
+    state->max_neg_val = src.val;
+  }
+}
+
+void AggregateFunctions::PercentileContInterpolationMerge(FunctionContext *ctx,
+    const StringVal& src, StringVal *dst) {
+  DCHECK(dst->len == sizeof(PercentileContInterpolationState));
+  auto srcState = reinterpret_cast<PercentileContInterpolationState *>(src.ptr);
+  auto dstState = reinterpret_cast<PercentileContInterpolationState *>(dst->ptr);
+  if (srcState->min_non_neg_diff < dstState->min_non_neg_diff) {
+    dstState->min_non_neg_diff = srcState->min_non_neg_diff;
+    dstState->min_non_neg_val = srcState->min_non_neg_val;
+  }
+  if (srcState->max_neg_diff > dstState->max_neg_diff) {
+    dstState->max_neg_diff = srcState->max_neg_diff;
+    dstState->max_neg_val = srcState->max_neg_val;
+  }
+}
+
+DoubleVal AggregateFunctions::PercentileContInterpolationFinalize(FunctionContext *ctx,
+    StringVal *dst) {
+  DCHECK(dst->len == sizeof(PercentileContInterpolationState));
+  auto state = reinterpret_cast<PercentileContInterpolationState *>(dst->ptr);
+  bool has_non_neg_diff = !std::isinf(state->min_non_neg_diff);
+  bool has_neg_diff = !std::isinf(state->max_neg_diff);
+  if (has_non_neg_diff && has_neg_diff) {
+    if (state->min_non_neg_val == state->max_neg_val) {
+      // Avoid unnecessary precision loss
+      return state->min_non_neg_val;
+    } else {
+      return (state->max_neg_val * state->min_non_neg_diff -
+          state->min_non_neg_val * state->max_neg_diff) /
+          (state->min_non_neg_diff - state->max_neg_diff);
+    }
+  } else if (has_non_neg_diff) {
+    return state->min_non_neg_val;
+  } else if (has_neg_diff) {
+    return state->max_neg_val;
+  } else {
+    return DoubleVal::null();
+  }
+}
+
 // Stamp out the templates for the types we need.
 template void AggregateFunctions::InitZero<BigIntVal>(FunctionContext*, BigIntVal* dst);
 

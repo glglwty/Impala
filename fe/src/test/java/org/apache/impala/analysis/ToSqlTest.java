@@ -1413,5 +1413,8 @@ public class ToSqlTest extends FrontendTestBase {
         "SELECT count(*) FROM functional.alltypesagg a WHERE tinyint_col < " +
         "(SELECT percentile_disc(0.2) within group (order by tinyint_col) " +
         "FROM functional.alltypesagg WHERE year = a.year)");
+    // Test median
+    testToSql("select median(int_col) from functional.alltypes",
+        "SELECT median(int_col) FROM functional.alltypes");
   }
 }

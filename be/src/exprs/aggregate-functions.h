@@ -240,6 +240,19 @@ class AggregateFunctions {
   /// Calculates the biased STDDEV, uses KnuthVar Init-Update-Merge functions
   static DoubleVal KnuthStddevPopFinalize(FunctionContext* context, const StringVal& val);
 
+  /// Interpolation functions for percentile_cont.
+  /// For percentile_cont(p) within group (order by col), the update function takes
+  /// col and row_number_diff = row_number() over (order by col) - p * count(col) over()
+  /// as parameters. The finalize function will return the interpolated results between
+  /// the values with row_number_diff closest to 0.
+  /// See PercentileAggExpr in FE.
+  static void PercentileContInterpolationInit(FunctionContext *ctx, StringVal *dst);
+  static void PercentileContInterpolationUpdate(FunctionContext* ctx,
+      const DoubleVal& src, const DoubleVal& row_number_diff, StringVal* dst);
+  static void PercentileContInterpolationMerge(FunctionContext* ctx, const StringVal& src,
+      StringVal* dst);
+  static DoubleVal PercentileContInterpolationFinalize(FunctionContext* ctx,
+      StringVal* dst);
 
   /// ----------------------------- Analytic Functions ---------------------------------
   /// Analytic functions implement the UDA interface (except Merge(), Serialize()) and are
