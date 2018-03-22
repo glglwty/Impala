@@ -1374,11 +1374,20 @@ DOUBLE,DOUBLE,DOUBLE,DOUBLE
 # Test percentile values out of [0, 1]. The result should be NULL.
 # PostgreSQL will return an error.
 select percentile_disc(-1) within group (order by tinyint_col),
-  percentile_disc(1.1) within group (order by tinyint_col) from alltypesagg;
+ percentile_disc(1.1) within group (order by tinyint_col),
+ percentile_cont(-1) within group (order by tinyint_col),
+ percentile_cont(1.1) within group (order by tinyint_col) from alltypesagg;
 ---- RESULTS
-NULL,NULL
+NULL,NULL,NULL,NULL
 ---- TYPES
-TINYINT,TINYINT
+TINYINT,TINYINT,DOUBLE,DOUBLE
+====
+---- QUERY
+select median(double_col) from functional.alltypesagg;
+---- RESULTS
+5050
+---- TYPES
+DOUBLE
 ====
 ---- QUERY
 # Test ordinal in group by, having, order by clauses, with percentile
@@ -1455,11 +1464,15 @@ drop view if exists percentile_view;
 select percentile_disc(0) within group (order by tinyint_col),
   percentile_disc(1) within group (order by tinyint_col),
   percentile_disc(0) within group (order by tinyint_col desc),
-  percentile_disc(1) within group (order by tinyint_col desc) from alltypesagg;
+  percentile_disc(1) within group (order by tinyint_col desc),
+  percentile_cont(0) within group (order by tinyint_col),
+  percentile_cont(1) within group (order by tinyint_col),
+  percentile_cont(0) within group (order by tinyint_col desc),
+  percentile_cont(1) within group (order by tinyint_col desc) from alltypesagg;
 ---- RESULTS
-1,9,9,1
+1,9,9,1,1,9,9,1
 ---- TYPES
-TINYINT,TINYINT,TINYINT,TINYINT
+TINYINT,TINYINT,TINYINT,TINYINT,DOUBLE,DOUBLE,DOUBLE,DOUBLE
 ====
 ---- QUERY
 # Test percentile expr in another expr.
@@ -1507,6 +1520,24 @@ select tinyint_col, percentile_disc(case when tinyint_col >= 5 then 0.8 else 0.2
 NULL,2000
 ---- TYPES
 TINYINT,BIGINT
+====
+---- QUERY
+# Test percentile_cont interpolation
+select percentile_cont(0.53) within group (order by double_col) from alltypesagg
+    group by tinyint_col order by tinyint_col;
+---- RESULTS
+5309.57
+5319.67
+5329.77
+5339.87
+5349.97
+5360.07
+5370.17
+5380.27
+5390.37
+5353
+---- TYPES
+DOUBLE
 ====
 ---- QUERY
 # Test multiple percentile functions mixed with other aggregations
@@ -1564,11 +1595,12 @@ TINYINT,BIGINT
 ====
 ---- QUERY
 # Test empty table
-select percentile_disc(0.5) within group (order by field) from emptytable;
+select percentile_disc(0.5) within group (order by field),
+  percentile_cont(0.5) within group (order by f2) from emptytable;
 ---- RESULTS
-'NULL'
+'NULL',NULL
 ---- TYPES
-STRING
+STRING,DOUBLE
 ====
 ---- QUERY
 # Test null table
