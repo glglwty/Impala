@@ -2092,6 +2092,44 @@ public class AnalyzeStmtsTest extends AnalyzerTest {
     checkExprType("select max(cs) from functional.chars_tiny", ScalarType.STRING);
     checkExprType("select max(lower(cs)) from functional.chars_tiny",
         ScalarType.STRING);
+
+    // Percentile exprs should be produced by grouping exprs
+    AnalyzesOk("select percentile_disc(case when tinyint_col >= 5 then 0.8 else 0.2 " +
+        "end) within group (order by bigint_col) from functional.alltypesagg group by " +
+        "tinyint_col");
+    AnalysisError("select percentile_disc(int_col) within group (order by bigint_col) " +
+        "from functional.alltypesagg group by tinyint_col", "Percentile value is not " +
+        "produced by aggregation output (missing from GROUP BY clause?)");
+    // Percentile expr should fail on an ambiguous column
+    AnalysisError("select count(b.smallint_col), percentile_disc(0.7) within group " +
+            "(order by int_col) from functional.alltypesagg a inner join " +
+            "functional.alltypesagg b on a.smallint_col=b.smallint_col",
+        "Column/field reference is ambiguous: 'int_col'");
+    // Analysis will succeed if int_col is used qualified
+    AnalyzesOk("select count(b.smallint_col), percentile_disc(0.7) within group " +
+        "(order by a.int_col) from functional.alltypesagg a inner join " +
+        "functional.alltypesagg b on a.smallint_col=b.smallint_col");
+    // Percentile expr should fail on an ambiguous alias referred by grouping clause
+    AnalysisError("select tinyint_col, " +
+        "percentile_disc(0.5) within group (order by string_col) as tinyint_col " +
+        "from functional.alltypesagg group by tinyint_col",
+        "Column 'tinyint_col' in GROUP BY clause is ambiguous");
+    // Analysis will succeed if the ambiguity is resolved
+    AnalyzesOk("select tinyint_col as int_col, " +
+        "percentile_disc(0.5) within group (order by string_col) as tinyint_col " +
+        "from functional.alltypesagg group by int_col");
+    // Ambiguous aliases are OK as long as they are not referred to
+    AnalyzesOk("select tinyint_col as a, " +
+        "percentile_disc(0.5) within group (order by string_col) as a " +
+        "from functional.alltypesagg group by tinyint_col");
+    // With clause should work with percentile
+    AnalyzesOk("with v as (select percentile_disc(0.5) within group " +
+        "(order by int_col) as a from functional.alltypesagg group by tinyint_col) " +
+        "select percentile_disc(0.5) within group (order by a) from v");
+    // Percentile expr works with correlated subquery
+    AnalyzesOk("select * from functional.alltypesagg a where tinyint_col < " +
+        "(select percentile_disc(0.5) within group (order by tinyint_col) from " +
+        "functional.alltypesagg where year = a.year)");
   }
 
   @Test

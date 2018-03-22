@@ -22,6 +22,7 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
@@ -174,5 +175,14 @@ public final class ExprSubstitutionMap {
   @Override
   public ExprSubstitutionMap clone() {
     return new ExprSubstitutionMap(Expr.cloneList(lhs_), Expr.cloneList(rhs_));
+  }
+
+  public Function<Expr, Expr> getFunc() {
+    return new Function<Expr, Expr>() {
+      @Override
+      public Expr apply(Expr expr) {
+        return get(expr);
+      }
+    };
   }
 }

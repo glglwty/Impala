@@ -26,7 +26,6 @@ import java.util.ListIterator;
 import java.util.Set;
 
 import org.apache.impala.analysis.BinaryPredicate.Operator;
-import org.apache.impala.catalog.Catalog;
 import org.apache.impala.catalog.Function;
 import org.apache.impala.catalog.Function.CompareMode;
 import org.apache.impala.catalog.ImpaladCatalog;
@@ -850,12 +849,11 @@ abstract public class Expr extends TreeNode<Expr> implements ParseNode, Cloneabl
    * the type of 'this'.
    */
   public Expr trySubstitute(ExprSubstitutionMap smap, Analyzer analyzer,
-      boolean preserveRootType)
-      throws AnalysisException {
+      boolean preserveRootType) throws AnalysisException {
     Expr result = clone();
     // Return clone to avoid removing casts.
     if (smap == null) return result;
-    result = result.substituteImpl(smap, analyzer);
+    result = result.substituteImpl(smap.getFunc());
     result.analyze(analyzer);
     if (preserveRootType && !type_.equals(result.getType())) result = result.castTo(type_);
     return result;
@@ -905,14 +903,14 @@ abstract public class Expr extends TreeNode<Expr> implements ParseNode, Cloneabl
    * Exprs that have non-child exprs which should be affected by substitutions must
    * override this method and apply the substitution to such exprs as well.
    */
-  protected Expr substituteImpl(ExprSubstitutionMap smap, Analyzer analyzer) {
-    if (isImplicitCast()) return getChild(0).substituteImpl(smap, analyzer);
-    if (smap != null) {
-      Expr substExpr = smap.get(this);
+  protected Expr substituteImpl(com.google.common.base.Function<Expr, Expr> f) {
+    if (isImplicitCast()) return getChild(0).substituteImpl(f);
+    if (f != null) {
+      Expr substExpr = f.apply(this);
       if (substExpr != null) return substExpr.clone();
     }
     for (int i = 0; i < children_.size(); ++i) {
-      children_.set(i, children_.get(i).substituteImpl(smap, analyzer));
+      children_.set(i, children_.get(i).substituteImpl(f));
     }
     // SlotRefs must remain analyzed to support substitution across query blocks. All
     // other exprs must be analyzed again after the substitution to add implicit casts

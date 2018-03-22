@@ -94,6 +94,10 @@ public class AggregateInfo extends AggregateInfoBase {
   // in the output tuple.
   protected ExprSubstitutionMap outputTupleSmap_ = new ExprSubstitutionMap();
 
+  // Map from all grouping exprs to a SlotRef referencing the corresp. slot in the output
+  // tuple. It's useful for checking whether an expr is bounded by grouping exprs.
+  private ExprSubstitutionMap outputGroupingExprSmap_ = new ExprSubstitutionMap();
+
   // Map from slots of outputTupleSmap_ to the corresponding slot in
   // intermediateTupleSmap_.
   protected ExprSubstitutionMap outputToIntermediateTupleSmap_ =
