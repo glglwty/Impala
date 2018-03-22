@@ -598,6 +598,10 @@ public class FunctionCallExpr extends Expr {
     if (type_.isWildcardChar() || type_.isWildcardVarchar()) {
       type_ = ScalarType.STRING;
     }
+
+    if (fnName_.getFunction().equalsIgnoreCase("median")) {
+      analyzer.setContainsPercentile();
+    }
   }
 
   @Override

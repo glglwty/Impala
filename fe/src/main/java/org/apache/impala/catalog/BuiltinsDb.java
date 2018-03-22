@@ -56,6 +56,10 @@ public class BuiltinsDb extends Db {
   // Size in bytes of RankState used for rank() and dense_rank().
   private static final int RANK_INTERMEDIATE_SIZE = 16;
 
+  // Size in bytes of PercentileContInterpolationState used for percentile_cont()
+  // and median()
+  private static final int PERCENTILE_CONT_INTERMEDIATE_SIZE = 32;
+
   public BuiltinsDb(String name) {
     super(name, createMetastoreDb(name));
     setIsSystemDb(true);
@@ -1006,6 +1010,23 @@ public class BuiltinsDb extends Db {
             Lists.newArrayList(type), type, true, false, false));
       }
     }
+    db.addBuiltin(AggregateFunction.createLogicalBuiltin(db, "percentile_cont",
+        Lists.<Type>newArrayList(Type.DOUBLE), Type.DOUBLE, true, false, false));
+    db.addBuiltin(AggregateFunction.createLogicalBuiltin(db, "median",
+        Lists.<Type>newArrayList(Type.DOUBLE), Type.DOUBLE, true, false, false));
+    // percentile_cont interpolation function.
+    Type PercentileContIntermediateType
+        = ScalarType.createFixedUdaIntermediateType(PERCENTILE_CONT_INTERMEDIATE_SIZE);
+    db.addBuiltin(AggregateFunction.createBuiltin(db, "_percentile_cont_interpolation",
+        Lists.<Type>newArrayList(Type.DOUBLE, Type.DOUBLE), Type.DOUBLE,
+        PercentileContIntermediateType,
+        "_ZN6impala18AggregateFunctions31PercentileContInterpolationInitEPN10impala_udf15FunctionContextEPNS1_9StringValE",
+        "_ZN6impala18AggregateFunctions33PercentileContInterpolationUpdateEPN10impala_udf15FunctionContextERKNS1_9DoubleValES6_PNS1_9StringValE",
+        "_ZN6impala18AggregateFunctions32PercentileContInterpolationMergeEPN10impala_udf15FunctionContextERKNS1_9StringValEPS4_",
+        null,
+        "_ZN6impala18AggregateFunctions35PercentileContInterpolationFinalizeEPN10impala_udf15FunctionContextEPNS1_9StringValE",
+        false, false, false
+    ));
 
     // Group_concat(string)
     db.addBuiltin(AggregateFunction.createBuiltin(db, "group_concat",

@@ -186,6 +186,7 @@ import org.apache.impala.thrift.TReservedWordsVersion;
     keywordMap.put("partition", SqlParserSymbols.KW_PARTITION);
     keywordMap.put("partitioned", SqlParserSymbols.KW_PARTITIONED);
     keywordMap.put("partitions", SqlParserSymbols.KW_PARTITIONS);
+    keywordMap.put("percentile_cont", SqlParserSymbols.KW_PERCENTILE_CONT);
     keywordMap.put("percentile_disc", SqlParserSymbols.KW_PERCENTILE_DISC);
     keywordMap.put("preceding", SqlParserSymbols.KW_PRECEDING);
     keywordMap.put("prepare_fn", SqlParserSymbols.KW_PREPARE_FN);
