@@ -1365,3 +1365,255 @@ PLAN-ROOT SINK
 00:SCAN HDFS [functional.alltypes t1]
    partitions=24/24 files=24 size=478.45KB
 ====
+# The same percentile order by expr should not be sorted twice and the row_number()
+# result should be reused.
+select percentile_disc(0.5) within group (order by bigint_col),
+  percentile_disc(0.3) within group(order by bigint_col) from functional.alltypesagg;
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+04:AGGREGATE [FINALIZE]
+|  output: min(CASE WHEN row_number() - count(bigint_col) * 0.5 >= 0 THEN bigint_col END), min(CASE WHEN row_number() - count(bigint_col) * 0.3 >= 0 THEN bigint_col END)
+|
+03:ANALYTIC
+|  functions: count(bigint_col)
+|
+02:ANALYTIC
+|  functions: row_number()
+|  order by: bigint_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+05:MERGING-EXCHANGE [UNPARTITIONED]
+|  order by: bigint_col ASC NULLS LAST
+|
+01:SORT
+|  order by: bigint_col ASC NULLS LAST
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# Test percentile with distinct aggregations
+select tinyint_col, percentile_disc(0.5) within group (order by bigint_col),
+  percentile_disc(0.3) within group (order by int_col),
+  avg(distinct int_col) from functional.alltypesagg
+  group by tinyint_col order by tinyint_col;
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+14:MERGING-EXCHANGE [UNPARTITIONED]
+|  order by: `_percentile_view`.`_slotRef_0` ASC
+|
+08:SORT
+|  order by: `_percentile_view`.`_slotRef_0` ASC
+|
+13:AGGREGATE [FINALIZE]
+|  output: avg:merge(`_percentile_view`.`_slotRef_4`), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_1` >= 0 THEN `_percentile_view`.`_slotRef_2` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_3` >= 0 THEN `_percentile_view`.`_slotRef_4` END)
+|  group by: `_percentile_view`.`_slotRef_0`
+|
+12:EXCHANGE [HASH(`_percentile_view`.`_slotRef_0`)]
+|
+07:AGGREGATE [STREAMING]
+|  output: avg(`_percentile_view`.`_slotRef_4`), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_1` >= 0 THEN `_percentile_view`.`_slotRef_2` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_3` >= 0 THEN `_percentile_view`.`_slotRef_4` END)
+|  group by: `_percentile_view`.`_slotRef_0`
+|
+11:AGGREGATE
+|  output: min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_1` >= 0 THEN `_percentile_view`.`_slotRef_2` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_3` >= 0 THEN `_percentile_view`.`_slotRef_4` END)
+|  group by: `_percentile_view`.`_slotRef_0`, `_percentile_view`.`_slotRef_4`
+|
+10:EXCHANGE [HASH(`_percentile_view`.`_slotRef_0`,`_percentile_view`.`_slotRef_4`)]
+|
+06:AGGREGATE [STREAMING]
+|  output: min(CASE WHEN row_number() - count(bigint_col) * 0.5 >= 0 THEN bigint_col END), min(CASE WHEN row_number() - count(int_col) * 0.3 >= 0 THEN int_col END)
+|  group by: tinyint_col, int_col
+|
+05:ANALYTIC
+|  functions: count(bigint_col), count(int_col)
+|  partition by: tinyint_col
+|
+04:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: bigint_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+03:SORT
+|  order by: tinyint_col ASC NULLS FIRST, bigint_col ASC NULLS LAST
+|
+02:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: int_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+01:SORT
+|  order by: tinyint_col ASC NULLS FIRST, int_col ASC NULLS LAST
+|
+09:EXCHANGE [HASH(tinyint_col)]
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# Test percentile in having and order by exprs.
+select percentile_disc(0.7) within group (order by int_col) from functional.alltypesagg
+  group by tinyint_col
+  having percentile_disc(0.5) within group (order by bigint_col) >= 4950
+  order by percentile_disc(0.3) within group (order by smallint_col)
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+13:MERGING-EXCHANGE [UNPARTITIONED]
+|  order by: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_4` >= 0 THEN `_percentile_view`.`_slotRef_5` END) ASC
+|
+09:SORT
+|  order by: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_4` >= 0 THEN `_percentile_view`.`_slotRef_5` END) ASC
+|
+12:AGGREGATE [FINALIZE]
+|  output: min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_0` >= 0 THEN `_percentile_view`.`_slotRef_1` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_2` >= 0 THEN `_percentile_view`.`_slotRef_3` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_4` >= 0 THEN `_percentile_view`.`_slotRef_5` END)
+|  group by: `_percentile_view`.`_slotRef_6`
+|  having: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_2` >= 0 THEN `_percentile_view`.`_slotRef_3` END) >= 4950
+|
+11:EXCHANGE [HASH(`_percentile_view`.`_slotRef_6`)]
+|
+08:AGGREGATE [STREAMING]
+|  output: min(CASE WHEN row_number() - count(int_col) * 0.7 >= 0 THEN int_col END), min(CASE WHEN row_number() - count(bigint_col) * 0.5 >= 0 THEN bigint_col END), min(CASE WHEN row_number() - count(smallint_col) * 0.3 >= 0 THEN smallint_col END)
+|  group by: tinyint_col
+|
+07:ANALYTIC
+|  functions: count(int_col), count(bigint_col), count(smallint_col)
+|  partition by: tinyint_col
+|
+06:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: int_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+05:SORT
+|  order by: tinyint_col ASC NULLS FIRST, int_col ASC NULLS LAST
+|
+04:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: smallint_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+03:SORT
+|  order by: tinyint_col ASC NULLS FIRST, smallint_col ASC NULLS LAST
+|
+02:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: bigint_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+01:SORT
+|  order by: tinyint_col ASC NULLS FIRST, bigint_col ASC NULLS LAST
+|
+10:EXCHANGE [HASH(tinyint_col)]
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# Test ordinal in group by, having, order by clauses, with percentile
+select tinyint_col, percentile_disc(0.5) within group (order by int_col),
+    percentile_disc(0.5) within group (order by bool_col) from functional.alltypesagg
+group by 1 having 3 order by 2;
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+11:MERGING-EXCHANGE [UNPARTITIONED]
+|  order by: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_6` >= 0 THEN `_percentile_view`.`_slotRef_2` END) ASC
+|
+07:SORT
+|  order by: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_6` >= 0 THEN `_percentile_view`.`_slotRef_2` END) ASC
+|
+10:AGGREGATE [FINALIZE]
+|  output: min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_1` >= 0 THEN `_percentile_view`.`_slotRef_2` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_3` >= 0 THEN `_percentile_view`.`_slotRef_4` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_5` >= 0 THEN `_percentile_view`.`_slotRef_4` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_6` >= 0 THEN `_percentile_view`.`_slotRef_2` END)
+|  group by: `_percentile_view`.`_slotRef_0`
+|  having: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_5` >= 0 THEN `_percentile_view`.`_slotRef_4` END)
+|
+09:EXCHANGE [HASH(`_percentile_view`.`_slotRef_0`)]
+|
+06:AGGREGATE [STREAMING]
+|  output: min(CASE WHEN row_number() - count(int_col) * 0.5 >= 0 THEN int_col END), min(CASE WHEN row_number() - count(bool_col) * 0.5 >= 0 THEN bool_col END), min(CASE WHEN row_number() - count(bool_col) * 0.5 >= 0 THEN bool_col END), min(CASE WHEN row_number() - count(int_col) * 0.5 >= 0 THEN int_col END)
+|  group by: tinyint_col
+|
+05:ANALYTIC
+|  functions: count(int_col), count(bool_col)
+|  partition by: tinyint_col
+|
+04:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: int_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+03:SORT
+|  order by: tinyint_col ASC NULLS FIRST, int_col ASC NULLS LAST
+|
+02:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: bool_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+01:SORT
+|  order by: tinyint_col ASC NULLS FIRST, bool_col ASC NULLS LAST
+|
+08:EXCHANGE [HASH(tinyint_col)]
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# Test aliases with percentile
+select tinyint_col as int_col,
+    percentile_disc(0.5) within group (order by string_col) as tinyint_col,
+    percentile_disc(0.5) within group (order by bool_col) as a
+    from functional.alltypesagg group by int_col having a order by tinyint_col;
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+11:MERGING-EXCHANGE [UNPARTITIONED]
+|  order by: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_6` >= 0 THEN `_percentile_view`.`_slotRef_2` END) ASC
+|
+07:SORT
+|  order by: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_6` >= 0 THEN `_percentile_view`.`_slotRef_2` END) ASC
+|
+10:AGGREGATE [FINALIZE]
+|  output: min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_1` >= 0 THEN `_percentile_view`.`_slotRef_2` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_3` >= 0 THEN `_percentile_view`.`_slotRef_4` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_5` >= 0 THEN `_percentile_view`.`_slotRef_4` END), min:merge(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_6` >= 0 THEN `_percentile_view`.`_slotRef_2` END)
+|  group by: `_percentile_view`.`_slotRef_0`
+|  having: min(CASE WHEN `_percentile_view`.`_percentile_row_number_diff_5` >= 0 THEN `_percentile_view`.`_slotRef_4` END)
+|
+09:EXCHANGE [HASH(`_percentile_view`.`_slotRef_0`)]
+|
+06:AGGREGATE [STREAMING]
+|  output: min(CASE WHEN row_number() - count(string_col) * 0.5 >= 0 THEN string_col END), min(CASE WHEN row_number() - count(bool_col) * 0.5 >= 0 THEN bool_col END), min(CASE WHEN row_number() - count(bool_col) * 0.5 >= 0 THEN bool_col END), min(CASE WHEN row_number() - count(string_col) * 0.5 >= 0 THEN string_col END)
+|  group by: tinyint_col
+|
+05:ANALYTIC
+|  functions: count(string_col), count(bool_col)
+|  partition by: tinyint_col
+|
+04:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: string_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+03:SORT
+|  order by: tinyint_col ASC NULLS FIRST, string_col ASC NULLS LAST
+|
+02:ANALYTIC
+|  functions: row_number()
+|  partition by: tinyint_col
+|  order by: bool_col ASC
+|  window: ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+|
+01:SORT
+|  order by: tinyint_col ASC NULLS FIRST, bool_col ASC NULLS LAST
+|
+08:EXCHANGE [HASH(tinyint_col)]
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====

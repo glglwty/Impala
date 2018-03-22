@@ -998,6 +998,15 @@ public class BuiltinsDb extends Db {
         prefix + "20TimestampAvgFinalizeEPN10impala_udf15FunctionContextERKNS1_9StringValE",
         false, true, false));
 
+    // Percentile logical functions that do not have a BE implementation. They are used
+    // for FE analysis and will be rewritten into a subquery after the analysis.
+    for (Type type : Type.getSupportedTypes()) {
+      if (!type.equals(Type.NULL)) {
+        db.addBuiltin(AggregateFunction.createLogicalBuiltin(db, "percentile_disc",
+            Lists.newArrayList(type), type, true, false, false));
+      }
+    }
+
     // Group_concat(string)
     db.addBuiltin(AggregateFunction.createBuiltin(db, "group_concat",
         Lists.<Type>newArrayList(Type.STRING), Type.STRING, Type.STRING, initNullString,

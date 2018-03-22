@@ -233,7 +233,7 @@ public abstract class QueryStmt extends StatementBase {
       isAscOrder.add(Boolean.valueOf(orderByElement.isAsc()));
       nullsFirstParams.add(orderByElement.getNullsFirstParam());
     }
-    substituteOrdinalsAndAliases(orderingExprs, "ORDER BY", analyzer);
+    substituteOrdinalsAndAliases(orderingExprs, "ORDER BY", analyzer, resultExprs_);
 
     if (!analyzer.isRootAnalyzer() && hasOffset() && !hasLimit()) {
       throw new AnalysisException("Order-by with offset without limit not supported" +
@@ -303,17 +303,17 @@ public abstract class QueryStmt extends StatementBase {
   }
 
   /**
-   * Substitutes an ordinal or an alias. An ordinal is an integer NumericLiteral
-   * that refers to a select-list expression by ordinal. An alias is a SlotRef
-   * that matches the alias of a select-list expression (tracked by 'aliasMap_').
+   * Substitutes an ordinal or an alias. An ordinal is an integer NumericLiteral that
+   * refers to a result expression by ordinal. An alias is a SlotRef that matches the
+   * alias of a select-list expression (tracked by 'aliasMap_').
    * We should substitute by ordinal or alias but not both to avoid an incorrect
    * double substitution.
    * Returns clone() of 'expr' if it is not an ordinal, nor an alias.
    * The returned expr is analyzed regardless of whether substitution was performed.
    */
   protected Expr substituteOrdinalOrAlias(Expr expr, String errorPrefix,
-      Analyzer analyzer) throws AnalysisException {
-    Expr substituteExpr = trySubstituteOrdinal(expr, errorPrefix, analyzer);
+      Analyzer analyzer, ArrayList<Expr> resultExprs) throws AnalysisException {
+    Expr substituteExpr = trySubstituteOrdinal(expr, errorPrefix, analyzer, resultExprs);
     if (substituteExpr != null) return substituteExpr;
     if (ambiguousAliasList_.contains(expr)) {
       throw new AnalysisException("Column '" + expr.toSql() +
@@ -336,16 +336,17 @@ public abstract class QueryStmt extends StatementBase {
    * substitution was performed.
    */
   protected void substituteOrdinalsAndAliases(List<Expr> exprs, String errorPrefix,
-      Analyzer analyzer) throws AnalysisException {
+      Analyzer analyzer, ArrayList<Expr> resultExprs) throws AnalysisException {
     for (int i = 0; i < exprs.size(); ++i) {
-      exprs.set(i, substituteOrdinalOrAlias(exprs.get(i), errorPrefix, analyzer));
+      exprs.set(i, substituteOrdinalOrAlias(exprs.get(i), errorPrefix, analyzer,
+          resultExprs));
     }
   }
 
   // Attempt to replace an expression of form "<number>" with the corresponding
-  // select list items.  Return null if not an ordinal expression.
-  private Expr trySubstituteOrdinal(Expr expr, String errorPrefix,
-      Analyzer analyzer) throws AnalysisException {
+  // result expr.  Return null if not an ordinal expression.
+  static private Expr trySubstituteOrdinal(Expr expr, String errorPrefix,
+      Analyzer analyzer, ArrayList<Expr> resultExprs) throws AnalysisException {
     if (!(expr instanceof NumericLiteral)) return null;
     expr.analyze(analyzer);
     if (!expr.getType().isIntegerType()) return null;
@@ -354,14 +355,14 @@ public abstract class QueryStmt extends StatementBase {
       throw new AnalysisException(
           errorPrefix + ": ordinal must be >= 1: " + expr.toSql());
     }
-    if (pos > resultExprs_.size()) {
+    if (pos > resultExprs.size()) {
       throw new AnalysisException(
           errorPrefix + ": ordinal exceeds number of items in select list: "
           + expr.toSql());
     }
 
     // Create copy to protect against accidentally shared state.
-    return resultExprs_.get((int) pos - 1).clone();
+    return resultExprs.get((int) pos - 1).clone();
   }
 
   /**
