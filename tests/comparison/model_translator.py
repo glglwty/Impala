@@ -406,6 +406,11 @@ class SqlWriter(object):
     sql += self._write(func.args[0]) + ')'
     return sql
 
+  def _write_percentile_func(self, func):
+    return self._to_sql_name(func.name()) + '(' + str(func.percentile) + \
+           ') WITHIN GROUP (ORDER BY ' + self._write(func.args[0]) + \
+           (" ASC" if func.is_asc else " DESC") + ')'
+
   def _write_data_type_metaclass(self, data_type_class):
     '''Write a data type class such as Int, Boolean, or Decimal(4, 2).'''
     if data_type_class == Char:

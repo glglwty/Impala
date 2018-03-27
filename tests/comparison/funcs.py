@@ -17,6 +17,7 @@
 
 from copy import deepcopy
 from itertools import ifilter
+from random import uniform, choice
 
 from tests.comparison.common import ValExpr
 from tests.comparison.db_types import (
@@ -230,6 +231,11 @@ class AggFunc(Func):
     if self.contains_analytic:
       raise Exception('Aggregate functions may not contain analytics')
 
+class PercentileFunc(AggFunc):
+  def __init__(self, *args):
+    AggFunc.__init__(self, *args)
+    self.percentile = uniform(0, 1)
+    self.is_asc = choice([True, False])
 
 class AnalyticFunc(Func):
 
@@ -443,6 +449,10 @@ def create_agg(name, returns=None, accepts=[], signatures=[]):
   AGG_FUNCS.append(func)
   return func
 
+def create_percentile(name, returns=None, accepts=[], signatures=[]):
+  func = create_func(name, returns, accepts, signatures, PercentileFunc)
+  AGG_FUNCS.append(func)
+  return func
 
 def create_analytic(
     name,
@@ -634,6 +644,8 @@ create_agg('Sum', signatures=[
 create_agg('Avg', signatures=[
   [Float, Arg(Int, determines_signature=True)],
   [Decimal, Arg(Decimal, determines_signature=True)]])
+create_percentile('Percentile_disc', returns=DataType, accepts=[DataType])
+create_percentile('Percentile_cont', returns=Float, accepts=[Number])
 
 create_analytic('Rank', require_order=True, supports_window=False, returns=Int)
 create_analytic('DenseRank', require_order=True, supports_window=False, returns=Int)

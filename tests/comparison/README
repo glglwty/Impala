@@ -33,15 +33,17 @@ database.
 Usage:
 
 1) Generate test data
-
-     ./data_generator.py --use-postgresql
+   Start mini cluster with yarn, which is not started in the default config.
+     $ testdata/cluster/admin -y start_cluster
 
    This will generate tables and data in Postgresql and Impala
+     $ ./data_generator.py --use-postgresql
+
 
 
 2) Run the comparison
 
-     ./discrepancy_searcher.py
+     $ ./discrepancy_searcher.py
 
    This will generate queries using the test database and compare the results against
    Postgresql (the default).
