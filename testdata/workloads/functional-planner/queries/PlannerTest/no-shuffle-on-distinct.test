@@ -1,0 +1,795 @@
+# distinct agg with grouping over a union
+select count(distinct int_col)
+from
+  (select * from functional.alltypes
+   union all
+   select * from functional.alltypessmall) t
+group by t.bigint_col
+limit 10
+---- PLAN
+PLAN-ROOT SINK
+|
+04:AGGREGATE [FINALIZE]
+|  output: count(int_col)
+|  group by: t.bigint_col
+|  limit: 10
+|
+03:AGGREGATE
+|  group by: bigint_col, int_col
+|
+00:UNION
+|  pass-through-operands: all
+|
+|--02:SCAN HDFS [functional.alltypessmall]
+|     partitions=4/4 files=4 size=6.32KB
+|
+01:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+07:EXCHANGE [UNPARTITIONED]
+|  limit: 10
+|
+04:AGGREGATE [FINALIZE]
+|  output: count(int_col)
+|  group by: t.bigint_col
+|  limit: 10
+|
+06:AGGREGATE
+|  group by: t.bigint_col, int_col
+|
+05:EXCHANGE [HASH(t.bigint_col)]
+|
+03:AGGREGATE [STREAMING]
+|  group by: bigint_col, int_col
+|
+00:UNION
+|  pass-through-operands: all
+|
+|--02:SCAN HDFS [functional.alltypessmall]
+|     partitions=4/4 files=4 size=6.32KB
+|
+01:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+====
+# mixed distinct and non-distinct agg with grouping over a union
+select count(smallint_col), count(distinct int_col)
+from
+  (select * from functional.alltypes
+   union all
+   select * from functional.alltypessmall) t
+group by t.bigint_col
+limit 10
+---- PLAN
+PLAN-ROOT SINK
+|
+04:AGGREGATE [FINALIZE]
+|  output: count(int_col), count:merge(smallint_col)
+|  group by: t.bigint_col
+|  limit: 10
+|
+03:AGGREGATE
+|  output: count(smallint_col)
+|  group by: bigint_col, int_col
+|
+00:UNION
+|  pass-through-operands: all
+|
+|--02:SCAN HDFS [functional.alltypessmall]
+|     partitions=4/4 files=4 size=6.32KB
+|
+01:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+07:EXCHANGE [UNPARTITIONED]
+|  limit: 10
+|
+04:AGGREGATE [FINALIZE]
+|  output: count(int_col), count:merge(smallint_col)
+|  group by: t.bigint_col
+|  limit: 10
+|
+06:AGGREGATE
+|  output: count:merge(smallint_col)
+|  group by: t.bigint_col, int_col
+|
+05:EXCHANGE [HASH(t.bigint_col)]
+|
+03:AGGREGATE [STREAMING]
+|  output: count(smallint_col)
+|  group by: bigint_col, int_col
+|
+00:UNION
+|  pass-through-operands: all
+|
+|--02:SCAN HDFS [functional.alltypessmall]
+|     partitions=4/4 files=4 size=6.32KB
+|
+01:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+====
+# mixed distinct and non-distinct agg with grouping over a union distinct
+select count(smallint_col), count(distinct int_col)
+from
+  (select * from functional.alltypes
+   union distinct
+   select * from functional.alltypessmall) t
+group by t.bigint_col
+limit 10
+---- PLAN
+PLAN-ROOT SINK
+|
+05:AGGREGATE [FINALIZE]
+|  output: count(int_col), count:merge(smallint_col)
+|  group by: t.bigint_col
+|  limit: 10
+|
+04:AGGREGATE
+|  output: count(smallint_col)
+|  group by: bigint_col, int_col
+|
+03:AGGREGATE [FINALIZE]
+|  group by: id, bool_col, tinyint_col, smallint_col, int_col, bigint_col, float_col, double_col, date_string_col, string_col, timestamp_col, year, month
+|
+00:UNION
+|  pass-through-operands: all
+|
+|--02:SCAN HDFS [functional.alltypessmall]
+|     partitions=4/4 files=4 size=6.32KB
+|
+01:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+10:EXCHANGE [UNPARTITIONED]
+|  limit: 10
+|
+05:AGGREGATE [FINALIZE]
+|  output: count(int_col), count:merge(smallint_col)
+|  group by: t.bigint_col
+|  limit: 10
+|
+09:AGGREGATE
+|  output: count:merge(smallint_col)
+|  group by: t.bigint_col, int_col
+|
+08:EXCHANGE [HASH(t.bigint_col)]
+|
+04:AGGREGATE [STREAMING]
+|  output: count(smallint_col)
+|  group by: bigint_col, int_col
+|
+07:AGGREGATE [FINALIZE]
+|  group by: id, bool_col, tinyint_col, smallint_col, int_col, bigint_col, float_col, double_col, date_string_col, string_col, timestamp_col, year, month
+|
+06:EXCHANGE [HASH(id,bool_col,tinyint_col,smallint_col,int_col,bigint_col,float_col,double_col,date_string_col,string_col,timestamp_col,year,month)]
+|
+03:AGGREGATE [STREAMING]
+|  group by: id, bool_col, tinyint_col, smallint_col, int_col, bigint_col, float_col, double_col, date_string_col, string_col, timestamp_col, year, month
+|
+00:UNION
+|  pass-through-operands: all
+|
+|--02:SCAN HDFS [functional.alltypessmall]
+|     partitions=4/4 files=4 size=6.32KB
+|
+01:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+====
+# test group_concat with distinct together with another distinct aggregate function
+select count(distinct cast(timestamp_col as string)),
+group_concat(distinct cast(timestamp_col as string))
+from functional.alltypesagg group by year
+---- PLAN
+PLAN-ROOT SINK
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(CAST(timestamp_col AS STRING)), group_concat(CAST(timestamp_col AS STRING))
+|  group by: year
+|
+01:AGGREGATE
+|  group by: year, CAST(timestamp_col AS STRING)
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+05:EXCHANGE [UNPARTITIONED]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(CAST(timestamp_col AS STRING)), group_concat(CAST(timestamp_col AS STRING))
+|  group by: year
+|
+04:AGGREGATE
+|  group by: year, CAST(timestamp_col AS STRING)
+|
+03:EXCHANGE [HASH(year)]
+|
+01:AGGREGATE [STREAMING]
+|  group by: year, CAST(timestamp_col AS STRING)
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# test group_concat distinct with other aggregate functions, with custom separator
+# and a group by
+select month, year, count(*), count(distinct date_string_col),
+group_concat(distinct date_string_col, '-') from functional.alltypesagg
+group by month, year
+---- PLAN
+PLAN-ROOT SINK
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(date_string_col), group_concat(date_string_col, '-'), count:merge(*)
+|  group by: month, year
+|
+01:AGGREGATE
+|  output: count(*)
+|  group by: month, year, date_string_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+05:EXCHANGE [UNPARTITIONED]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(date_string_col), group_concat(date_string_col, '-'), count:merge(*)
+|  group by: month, year
+|
+04:AGGREGATE
+|  output: count:merge(*)
+|  group by: month, year, date_string_col
+|
+03:EXCHANGE [HASH(month,year)]
+|
+01:AGGREGATE [STREAMING]
+|  output: count(*)
+|  group by: month, year, date_string_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# Distinct grouping aggregation where input is partitioned on distinct and grouping exprs.
+# Planner should not redundantly repartition the data that was already partitioned on
+# the required key by the join.
+select straight_join c_custkey, count(distinct c_custkey)
+from tpch_parquet.orders inner join [shuffle] tpch_parquet.customer on c_custkey = o_custkey
+group by 1
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+07:EXCHANGE [UNPARTITIONED]
+|
+04:AGGREGATE [FINALIZE]
+|  output: count(c_custkey)
+|  group by: c_custkey
+|
+03:AGGREGATE
+|  group by: c_custkey, c_custkey
+|
+02:HASH JOIN [INNER JOIN, PARTITIONED]
+|  hash predicates: o_custkey = c_custkey
+|  runtime filters: RF000 <- c_custkey
+|
+|--06:EXCHANGE [HASH(c_custkey)]
+|  |
+|  01:SCAN HDFS [tpch_parquet.customer]
+|     partitions=1/1 files=1 size=12.27MB
+|
+05:EXCHANGE [HASH(o_custkey)]
+|
+00:SCAN HDFS [tpch_parquet.orders]
+   partitions=1/1 files=2 size=54.00MB
+   runtime filters: RF000 -> o_custkey
+====
+# count(distinct) w/ grouping
+select tinyint_col, count(distinct int_col, bigint_col)
+from functional.alltypesagg
+group by 1
+---- PLAN
+PLAN-ROOT SINK
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(if(int_col IS NULL, NULL, bigint_col))
+|  group by: tinyint_col
+|
+01:AGGREGATE
+|  group by: tinyint_col, int_col, bigint_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+05:EXCHANGE [UNPARTITIONED]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(if(int_col IS NULL, NULL, bigint_col))
+|  group by: tinyint_col
+|
+04:AGGREGATE
+|  group by: tinyint_col, int_col, bigint_col
+|
+03:EXCHANGE [HASH(tinyint_col)]
+|
+01:AGGREGATE [STREAMING]
+|  group by: tinyint_col, int_col, bigint_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# count(distinct) and sum(distinct) w/ grouping
+select tinyint_col, count(distinct int_col), sum(distinct int_col)
+from functional.alltypesagg
+group by 1
+---- PLAN
+PLAN-ROOT SINK
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col), sum(int_col)
+|  group by: tinyint_col
+|
+01:AGGREGATE
+|  group by: tinyint_col, int_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+05:EXCHANGE [UNPARTITIONED]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col), sum(int_col)
+|  group by: tinyint_col
+|
+04:AGGREGATE
+|  group by: tinyint_col, int_col
+|
+03:EXCHANGE [HASH(tinyint_col)]
+|
+01:AGGREGATE [STREAMING]
+|  group by: tinyint_col, int_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# count(distinct) and sum(distinct) w/ grouping; distinct in min() and max()
+# is ignored
+select tinyint_col, count(distinct int_col),
+min(distinct smallint_col), max(distinct string_col)
+from functional.alltypesagg group by 1
+---- PLAN
+PLAN-ROOT SINK
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col), min:merge(smallint_col), max:merge(string_col)
+|  group by: tinyint_col
+|
+01:AGGREGATE
+|  output: min(smallint_col), max(string_col)
+|  group by: tinyint_col, int_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+05:EXCHANGE [UNPARTITIONED]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col), min:merge(smallint_col), max:merge(string_col)
+|  group by: tinyint_col
+|
+04:AGGREGATE
+|  output: min:merge(smallint_col), max:merge(string_col)
+|  group by: tinyint_col, int_col
+|
+03:EXCHANGE [HASH(tinyint_col)]
+|
+01:AGGREGATE [STREAMING]
+|  output: min(smallint_col), max(string_col)
+|  group by: tinyint_col, int_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# aggregate fns with and without distinct
+select tinyint_col, count(distinct int_col), count(*), sum(distinct int_col),
+sum(int_col), min(smallint_col), max(bigint_col)
+from functional.alltypesagg group by 1
+---- PLAN
+PLAN-ROOT SINK
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col), sum(int_col), count:merge(*), sum:merge(int_col), min:merge(smallint_col), max:merge(bigint_col)
+|  group by: tinyint_col
+|
+01:AGGREGATE
+|  output: count(*), sum(int_col), min(smallint_col), max(bigint_col)
+|  group by: tinyint_col, int_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+05:EXCHANGE [UNPARTITIONED]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col), sum(int_col), count:merge(*), sum:merge(int_col), min:merge(smallint_col), max:merge(bigint_col)
+|  group by: tinyint_col
+|
+04:AGGREGATE
+|  output: count:merge(*), sum:merge(int_col), min:merge(smallint_col), max:merge(bigint_col)
+|  group by: tinyint_col, int_col
+|
+03:EXCHANGE [HASH(tinyint_col)]
+|
+01:AGGREGATE [STREAMING]
+|  output: count(*), sum(int_col), min(smallint_col), max(bigint_col)
+|  group by: tinyint_col, int_col
+|
+00:SCAN HDFS [functional.alltypesagg]
+   partitions=11/11 files=11 size=814.73KB
+====
+# IMPALA-2266: Test grouping distinct aggregation inside an inline view.
+select * from (select count(distinct int_col) cd from functional.alltypes group by bool_col) v
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+05:EXCHANGE [UNPARTITIONED]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col)
+|  group by: bool_col
+|
+04:AGGREGATE
+|  group by: bool_col, int_col
+|
+03:EXCHANGE [HASH(bool_col)]
+|
+01:AGGREGATE [STREAMING]
+|  group by: bool_col, int_col
+|
+00:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+====
+# test static partition insert from a query with distinct grouped aggregation
+# we expect the insert fragment to be partitioned by the grouping exprs of the query stmt
+# and not by the partition exprs of the insert stmt
+insert into functional.alltypes(bigint_col, string_col) partition (year=2010, month=10)
+select count(distinct int_col), string_col from functional.alltypes
+group by string_col
+---- PLAN
+WRITE TO HDFS [functional.alltypes, OVERWRITE=false, PARTITION-KEYS=(2010,10)]
+|  partitions=1
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col)
+|  group by: string_col
+|
+01:AGGREGATE
+|  group by: string_col, int_col
+|
+00:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+---- DISTRIBUTEDPLAN
+WRITE TO HDFS [functional.alltypes, OVERWRITE=false, PARTITION-KEYS=(2010,10)]
+|  partitions=1
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(int_col)
+|  group by: string_col
+|
+04:AGGREGATE
+|  group by: string_col, int_col
+|
+03:EXCHANGE [HASH(string_col)]
+|
+01:AGGREGATE [STREAMING]
+|  group by: string_col, int_col
+|
+00:SCAN HDFS [functional.alltypes]
+   partitions=24/24 files=24 size=478.45KB
+====
+insert into functional_kudu.testtbl(id, name)
+select count(distinct id), name from functional_kudu.dimtbl
+group by name
+---- PLAN
+INSERT INTO KUDU [functional_kudu.testtbl]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(id)
+|  group by: name
+|
+01:AGGREGATE
+|  group by: name, id
+|
+00:SCAN KUDU [functional_kudu.dimtbl]
+---- DISTRIBUTEDPLAN
+INSERT INTO KUDU [functional_kudu.testtbl]
+|
+06:PARTIAL SORT
+|  order by: KuduPartition(count(id)) ASC NULLS LAST, count(id) ASC NULLS LAST
+|
+05:EXCHANGE [KUDU(KuduPartition(count(id)))]
+|
+02:AGGREGATE [FINALIZE]
+|  output: count(id)
+|  group by: name
+|
+04:AGGREGATE
+|  group by: name, id
+|
+03:EXCHANGE [HASH(name)]
+|
+01:AGGREGATE [STREAMING]
+|  group by: name, id
+|
+00:SCAN KUDU [functional_kudu.dimtbl]
+====
+# TPCH-Q16
+# Q16 - Parts/Supplier Relation Query
+select
+  p_brand,
+  p_type,
+  p_size,
+  count(distinct ps_suppkey) as supplier_cnt
+from
+  tpch.partsupp,
+  tpch.part
+where
+  p_partkey = ps_partkey
+  and p_brand <> 'Brand#45'
+  and p_type not like 'MEDIUM POLISHED%'
+  and p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+  and ps_suppkey not in (
+    select
+      s_suppkey
+    from
+      tpch.supplier
+    where
+      s_comment like '%Customer%Complaints%'
+  )
+group by
+  p_brand,
+  p_type,
+  p_size
+order by
+  supplier_cnt desc,
+  p_brand,
+  p_type,
+  p_size
+---- PLAN
+PLAN-ROOT SINK
+|
+07:SORT
+|  order by: count(ps_suppkey) DESC, p_brand ASC, p_type ASC, p_size ASC
+|
+06:AGGREGATE [FINALIZE]
+|  output: count(ps_suppkey)
+|  group by: p_brand, p_type, p_size
+|
+05:AGGREGATE
+|  group by: p_brand, p_type, p_size, ps_suppkey
+|
+04:HASH JOIN [NULL AWARE LEFT ANTI JOIN]
+|  hash predicates: ps_suppkey = s_suppkey
+|
+|--02:SCAN HDFS [tpch.supplier]
+|     partitions=1/1 files=1 size=1.33MB
+|     predicates: s_comment LIKE '%Customer%Complaints%'
+|
+03:HASH JOIN [INNER JOIN]
+|  hash predicates: ps_partkey = p_partkey
+|  runtime filters: RF000 <- p_partkey
+|
+|--01:SCAN HDFS [tpch.part]
+|     partitions=1/1 files=1 size=22.83MB
+|     predicates: p_size IN (49, 14, 23, 45, 19, 3, 36, 9), p_brand != 'Brand#45', NOT p_type LIKE 'MEDIUM POLISHED%'
+|
+00:SCAN HDFS [tpch.partsupp]
+   partitions=1/1 files=1 size=112.71MB
+   runtime filters: RF000 -> ps_partkey
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+12:MERGING-EXCHANGE [UNPARTITIONED]
+|  order by: count(ps_suppkey) DESC, p_brand ASC, p_type ASC, p_size ASC
+|
+07:SORT
+|  order by: count(ps_suppkey) DESC, p_brand ASC, p_type ASC, p_size ASC
+|
+06:AGGREGATE [FINALIZE]
+|  output: count(ps_suppkey)
+|  group by: p_brand, p_type, p_size
+|
+11:AGGREGATE
+|  group by: p_brand, p_type, p_size, ps_suppkey
+|
+10:EXCHANGE [HASH(p_brand,p_type,p_size)]
+|
+05:AGGREGATE [STREAMING]
+|  group by: p_brand, p_type, p_size, ps_suppkey
+|
+04:HASH JOIN [NULL AWARE LEFT ANTI JOIN, BROADCAST]
+|  hash predicates: ps_suppkey = s_suppkey
+|
+|--09:EXCHANGE [BROADCAST]
+|  |
+|  02:SCAN HDFS [tpch.supplier]
+|     partitions=1/1 files=1 size=1.33MB
+|     predicates: s_comment LIKE '%Customer%Complaints%'
+|
+03:HASH JOIN [INNER JOIN, BROADCAST]
+|  hash predicates: ps_partkey = p_partkey
+|  runtime filters: RF000 <- p_partkey
+|
+|--08:EXCHANGE [BROADCAST]
+|  |
+|  01:SCAN HDFS [tpch.part]
+|     partitions=1/1 files=1 size=22.83MB
+|     predicates: p_size IN (49, 14, 23, 45, 19, 3, 36, 9), p_brand != 'Brand#45', NOT p_type LIKE 'MEDIUM POLISHED%'
+|
+00:SCAN HDFS [tpch.partsupp]
+   partitions=1/1 files=1 size=112.71MB
+   runtime filters: RF000 -> ps_partkey
+---- PARALLELPLANS
+PLAN-ROOT SINK
+|
+12:MERGING-EXCHANGE [UNPARTITIONED]
+|  order by: count(ps_suppkey) DESC, p_brand ASC, p_type ASC, p_size ASC
+|
+07:SORT
+|  order by: count(ps_suppkey) DESC, p_brand ASC, p_type ASC, p_size ASC
+|
+06:AGGREGATE [FINALIZE]
+|  output: count(ps_suppkey)
+|  group by: p_brand, p_type, p_size
+|
+11:AGGREGATE
+|  group by: p_brand, p_type, p_size, ps_suppkey
+|
+10:EXCHANGE [HASH(p_brand,p_type,p_size)]
+|
+05:AGGREGATE [STREAMING]
+|  group by: p_brand, p_type, p_size, ps_suppkey
+|
+04:HASH JOIN [NULL AWARE LEFT ANTI JOIN, BROADCAST]
+|  hash predicates: ps_suppkey = s_suppkey
+|
+|--JOIN BUILD
+|  |  join-table-id=00 plan-id=01 cohort-id=01
+|  |  build expressions: s_suppkey
+|  |
+|  09:EXCHANGE [BROADCAST]
+|  |
+|  02:SCAN HDFS [tpch.supplier]
+|     partitions=1/1 files=1 size=1.33MB
+|     predicates: s_comment LIKE '%Customer%Complaints%'
+|
+03:HASH JOIN [INNER JOIN, BROADCAST]
+|  hash predicates: ps_partkey = p_partkey
+|  runtime filters: RF000 <- p_partkey
+|
+|--JOIN BUILD
+|  |  join-table-id=01 plan-id=02 cohort-id=01
+|  |  build expressions: p_partkey
+|  |
+|  08:EXCHANGE [BROADCAST]
+|  |
+|  01:SCAN HDFS [tpch.part]
+|     partitions=1/1 files=1 size=22.83MB
+|     predicates: p_size IN (49, 14, 23, 45, 19, 3, 36, 9), p_brand != 'Brand#45', NOT p_type LIKE 'MEDIUM POLISHED%'
+|
+00:SCAN HDFS [tpch.partsupp]
+   partitions=1/1 files=1 size=112.71MB
+   runtime filters: RF000 -> ps_partkey
+====
+# TPCH-Q16
+# Q16 - Parts/Supplier Relation Query
+select
+  p_brand,
+  p_type,
+  p_size,
+  count(distinct s_suppkey) as supplier_cnt
+from
+  tpch_nested_parquet.supplier s,
+  s.s_partsupps ps,
+  tpch_nested_parquet.part p
+where
+  p_partkey = ps_partkey
+  and p_brand <> 'Brand#45'
+  and p_type not like 'MEDIUM POLISHED%'
+  and p_size in (49, 14, 23, 45, 19, 3, 36, 9)
+  and s_comment not like '%Customer%Complaints%'
+group by
+  p_brand,
+  p_type,
+  p_size
+order by
+  supplier_cnt desc,
+  p_brand,
+  p_type,
+  p_size
+---- PLAN
+PLAN-ROOT SINK
+|
+09:SORT
+|  order by: count(s_suppkey) DESC, p_brand ASC, p_type ASC, p_size ASC
+|
+08:AGGREGATE [FINALIZE]
+|  output: count(s_suppkey)
+|  group by: p_brand, p_type, p_size
+|
+07:AGGREGATE
+|  group by: p_brand, p_type, p_size, s_suppkey
+|
+06:HASH JOIN [INNER JOIN]
+|  hash predicates: ps_partkey = p_partkey
+|
+|--05:SCAN HDFS [tpch_nested_parquet.part p]
+|     partitions=1/1 files=1 size=6.24MB
+|     predicates: p_size IN (49, 14, 23, 45, 19, 3, 36, 9), p_brand != 'Brand#45', NOT p_type LIKE 'MEDIUM POLISHED%'
+|
+01:SUBPLAN
+|
+|--04:NESTED LOOP JOIN [CROSS JOIN]
+|  |
+|  |--02:SINGULAR ROW SRC
+|  |
+|  03:UNNEST [s.s_partsupps ps]
+|
+00:SCAN HDFS [tpch_nested_parquet.supplier s]
+   partitions=1/1 files=1 size=43.00MB
+   predicates: NOT s_comment LIKE '%Customer%Complaints%', !empty(s.s_partsupps)
+---- DISTRIBUTEDPLAN
+PLAN-ROOT SINK
+|
+13:MERGING-EXCHANGE [UNPARTITIONED]
+|  order by: count(s_suppkey) DESC, p_brand ASC, p_type ASC, p_size ASC
+|
+09:SORT
+|  order by: count(s_suppkey) DESC, p_brand ASC, p_type ASC, p_size ASC
+|
+08:AGGREGATE [FINALIZE]
+|  output: count(s_suppkey)
+|  group by: p_brand, p_type, p_size
+|
+12:AGGREGATE
+|  group by: p_brand, p_type, p_size, s_suppkey
+|
+11:EXCHANGE [HASH(p_brand,p_type,p_size)]
+|
+07:AGGREGATE [STREAMING]
+|  group by: p_brand, p_type, p_size, s_suppkey
+|
+06:HASH JOIN [INNER JOIN, BROADCAST]
+|  hash predicates: ps_partkey = p_partkey
+|
+|--10:EXCHANGE [BROADCAST]
+|  |
+|  05:SCAN HDFS [tpch_nested_parquet.part p]
+|     partitions=1/1 files=1 size=6.24MB
+|     predicates: p_size IN (49, 14, 23, 45, 19, 3, 36, 9), p_brand != 'Brand#45', NOT p_type LIKE 'MEDIUM POLISHED%'
+|
+01:SUBPLAN
+|
+|--04:NESTED LOOP JOIN [CROSS JOIN]
+|  |
+|  |--02:SINGULAR ROW SRC
+|  |
+|  03:UNNEST [s.s_partsupps ps]
+|
+00:SCAN HDFS [tpch_nested_parquet.supplier s]
+   partitions=1/1 files=1 size=43.00MB
+   predicates: NOT s_comment LIKE '%Customer%Complaints%', !empty(s.s_partsupps)
+====

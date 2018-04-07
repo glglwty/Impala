@@ -283,6 +283,11 @@ enum TImpalaQueryOptions {
   // not include time spent in planning, scheduling or admission control. A value of 0
   // means no time limit.
   EXEC_TIME_LIMIT_S,
+
+  // When a query has both grouping exprs and a distinct expr, impala can shuffle by
+  // both, or by grouping exprs only. Shuffling by both is better if grouping exprs have
+  // low NDVs.
+  SHUFFLE_DISTINCT_EXPR,
 }
 
 // The summary of a DML statement.

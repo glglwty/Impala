@@ -75,6 +75,13 @@ public class PlannerTest extends PlannerTestBase {
   }
 
   @Test
+  public void testNoShuffleOnDistinct() {
+    TQueryOptions options = defaultQueryOptions();
+    options.setShuffle_distinct_expr(false);
+    runPlannerTestFile("no-shuffle-on-distinct", options);
+  }
+
+  @Test
   public void testAggregation() {
     runPlannerTestFile("aggregation");
   }

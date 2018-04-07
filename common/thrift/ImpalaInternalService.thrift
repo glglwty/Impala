@@ -272,6 +272,11 @@ struct TQueryOptions {
   // not include time spent in planning, scheduling or admission control. A value of 0
   // means no time limit.
   63: optional i32 exec_time_limit_s = 0;
+
+  // When a query has both grouping exprs and a distinct expr, impala can shuffle by
+  // both, or by grouping exprs only. Shuffling by both is better if grouping exprs have
+  // low NDVs.
+  64: optional bool shuffle_distinct_expr = true;
 }
 
 // Impala currently has two types of sessions: Beeswax and HiveServer2

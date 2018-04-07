@@ -883,27 +883,43 @@ public class DistributedPlanner {
   private PlanFragment createPhase2DistinctAggregationFragment(
       AggregationNode phase2AggNode, PlanFragment childFragment,
       ArrayList<PlanFragment> fragments) throws ImpalaException {
+    // When a query has both grouping exprs and a distinct expr, impala can shuffle by
+    // both, or by grouping exprs only. Shuffling by both is better if grouping exprs have
+    // low NDVs. This is controlled by a query option.
+    boolean shuffleDistinctExpr = ctx_.getQueryOptions().shuffle_distinct_expr ||
+        phase2AggNode.getAggInfo().getGroupingExprs().isEmpty();
     // The phase-1 aggregation node is already in the child fragment.
     Preconditions.checkState(phase2AggNode.getChild(0) == childFragment.getPlanRoot());
 
     AggregateInfo phase1AggInfo = ((AggregationNode) phase2AggNode.getChild(0))
         .getAggInfo();
-    // We need to do
-    // - child fragment:
-    //   * phase-1 aggregation
-    // - first merge fragment, hash-partitioned on grouping and distinct exprs:
-    //   * merge agg of phase-1
-    //   * phase-2 agg
-    // - second merge fragment, partitioned on grouping exprs or unpartitioned
-    //   without grouping exprs
-    //   * merge agg of phase-2
+    ArrayList<Expr> partitionExprs;
     // With grouping, the output partition exprs of the child are the (input) grouping
     // exprs of the parent. The grouping exprs reference the output tuple of phase-1
     // but the partitioning happens on the intermediate tuple of the phase-1.
-    ArrayList<Expr> partitionExprs = Expr.substituteList(
-        phase1AggInfo.getGroupingExprs(), phase1AggInfo.getIntermediateSmap(),
-        ctx_.getRootAnalyzer(), false);
-
+    if (shuffleDistinctExpr) {
+      // We need to do
+      // - child fragment:
+      //   * phase-1 aggregation
+      // - first merge fragment, hash-partitioned on grouping and distinct exprs:
+      //   * merge agg of phase-1
+      //   * phase-2 agg
+      // - second merge fragment, partitioned on grouping exprs or unpartitioned
+      //   without grouping exprs
+      //   * merge agg of phase-2
+      partitionExprs = Expr.substituteList(
+          phase1AggInfo.getGroupingExprs(), phase1AggInfo.getIntermediateSmap(),
+          ctx_.getRootAnalyzer(), false);
+    } else {
+      // We need to do
+      // - child fragment:
+      //   * phase-1 aggregation
+      // - merge fragment, hash-partitioned on grouping exprs:
+      //   * merge agg of phase-1
+      //   * phase-2 agg
+      partitionExprs = Expr.substituteList(phase2AggNode.getAggInfo().getGroupingExprs(),
+          phase1AggInfo.getOutputToIntermediateSmap(), ctx_.getRootAnalyzer(), false);
+    }
     PlanFragment firstMergeFragment;
     boolean childHasCompatPartition = ctx_.getRootAnalyzer().setsHaveValueTransfer(
         partitionExprs, childFragment.getDataPartition().getPartitionExprs(), true);
@@ -912,6 +928,7 @@ public class DistributedPlanner {
       // phase-1 merge step.
       childFragment.addPlanRoot(phase2AggNode);
       firstMergeFragment = childFragment;
+      if (!shuffleDistinctExpr) return firstMergeFragment;
     } else {
       DataPartition mergePartition = DataPartition.hashPartitioned(partitionExprs);
       // Convert the existing node to a preaggregation.
@@ -932,7 +949,12 @@ public class DistributedPlanner {
       // if there is a limit, it had already been placed with the phase-2 aggregation
       // step (which is where it should be)
       firstMergeFragment.addPlanRoot(phase2AggNode);
-      fragments.add(firstMergeFragment);
+      if (shuffleDistinctExpr) {
+        fragments.add(firstMergeFragment);
+      } else {
+        // This is the only agg fragment if distinct expr is not shuffled by.
+        return firstMergeFragment;
+      }
     }
     phase2AggNode.unsetNeedsFinalize();
     phase2AggNode.setIntermediateTuple();
