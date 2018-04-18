@@ -357,10 +357,10 @@ TEST(SslTest, TLSVersionControl) {
   // Test all configurations supported by Thrift, even if some won't work with the linked
   // OpenSSL(). We catch those by checking IsSupported() for both the client and ther
   // server.
-  vector<Config> configs = {{SSLTLS, {SSLTLS, TLSv1_0, TLSv1_1, TLSv1_2}},
-      {TLSv1_0, {SSLTLS, TLSv1_0}},
-      {TLSv1_1, {SSLTLS, TLSv1_1}},
-      {TLSv1_2, {SSLTLS, TLSv1_2}}};
+  vector<Config> configs = {
+      {TLSv1_0, {TLSv1_0, TLSv1_1, TLSv1_2}},
+      {TLSv1_1, {TLSv1_1, TLSv1_2}},
+      {TLSv1_2, {TLSv1_2}}};
 
   for (const auto& config : configs) {
     // For each config, start a server with the requested protocol spec, and then try to
@@ -371,7 +371,7 @@ TEST(SslTest, TLSVersionControl) {
     ThriftServer* server;
     EXPECT_OK(ThriftServerBuilder("DummyStatestore", MakeProcessor(), port)
                   .ssl(SERVER_CERT, PRIVATE_KEY)
-                  .ssl_version(config.server_version)
+                  .ssl_version(SSLTLS)
                   .Build(&server));
     if (!SSLProtoVersions::IsSupported(config.server_version)) {
       EXPECT_FALSE(server->Start().ok());

@@ -90,9 +90,9 @@ bool SSLProtoVersions::IsSupported(const SSLProtocol& protocol) {
 
   switch (max_supported_tls_version) {
     case TLS1_VERSION:
-      return protocol == SSLTLS || protocol == TLSv1_0;
+      return protocol == TLSv1_0;
     case TLS1_1_VERSION:
-      return protocol == SSLTLS || protocol == TLSv1_0 || protocol == TLSv1_1;
+      return protocol == TLSv1_0 || protocol == TLSv1_1;
     default:
       DCHECK_GE(max_supported_tls_version, TLS1_2_VERSION);
       return true;
