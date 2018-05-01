@@ -648,6 +648,71 @@ CLASSPATH="$IMPALA_FE_DIR/target/classes:$CLASSPATH"
 CLASSPATH="$IMPALA_FE_DIR/src/test/resources:$CLASSPATH"
 CLASSPATH="$LZO_JAR_PATH:$CLASSPATH"
 
+# If MINI_CLUSTER_MEM_LIMIT_MB isn't set, configure it based on system memory.
+if [ -z "${MINI_CLUSTER_MEM_LIMIT_MB+x}" ]; then
+  MEM_AVAIL_KB=$(grep -oP "^MemAvailable:[[:space:]]*\K\d*" /proc/meminfo || : )
+  if [ "$MEM_AVAIL_KB" = "" ]; then
+    # kernel version < 3.14. Use an old method instead. It is "pretty much guaranteed to
+    # be wrong today". See kernel commit 34e431b0ae398fc54ea69ff85ec700722c9da773.
+    MEM_CACHED_KB=$(grep -oP "^Cached:[[:space:]]*\K\d*" /proc/meminfo)
+    MEM_FREE_KB=$(grep -oP "^MemFree:[[:space:]]*\K\d*" /proc/meminfo)
+    MEM_AVAIL_KB=$((MEM_CACHED_KB+MEM_FREE_KB))
+  fi
+  export MINI_CLUSTER_MEM_LIMIT_MB=$((MEM_AVAIL_KB/1024))
+  # The following works with cgoup v1 and should be distro independent
+  if [ -f /proc/self/cgroup ]; then
+    # Parse cgroup filesystem path.
+    CGROUP_FS_PATH=$(grep -oP "\d*:.*memory.*:\K.*" /proc/self/cgroup || : )
+    # Parse cgroup mount point
+    CGROUP_MOUNTPOINT=\
+$(grep -oP "$CGROUP_FS_PATH \K.*/memory(?= )" /proc/self/mountinfo || : )
+    if [ -f "$CGROUP_MOUNTPOINT/memory.limit_in_bytes" ]; then
+      # Get cgroup available memory
+      CGROUP_LIMIT_BYTES=$(cat "$CGROUP_MOUNTPOINT/memory.limit_in_bytes")
+      CGROUP_CACHE_BYTES=\
+$(grep -oP "^cache[[:space:]]*\K\d*" "$CGROUP_MOUNTPOINT/memory.stat")
+      CGROUP_USAGE_BYTES=$(cat "$CGROUP_MOUNTPOINT/memory.usage_in_bytes")
+      CGROUP_AVAIL_MB=\
+$(((CGROUP_LIMIT_BYTES-CGROUP_USAGE_BYTES+CGROUP_CACHE_BYTES)/1024/1024))
+      export MINI_CLUSTER_MEM_LIMIT_MB=\
+$((MINI_CLUSTER_MEM_LIMIT_MB<CGROUP_AVAIL_MB?MINI_CLUSTER_MEM_LIMIT_MB:CGROUP_AVAIL_MB))
+    fi
+  fi
+fi
+
+echo "Minicluster memory limit: ${MINI_CLUSTER_MEM_LIMIT_MB}MB"
+if [ "${MINI_CLUSTER_MEM_LIMIT_MB}" -le "32768" ]; then
+  # Use 26.375GB if available memory is lower than 32 GB
+  # 18GB for 3 * impalad
+  export IMPALAD_MEM_LIMIT_MB=6144
+  # <= 1GB for [3..5] * datanode + namenode + yarn + kms
+  export HADOOP_DAEMON_MEM_LIMIT_MB=128
+  # <= 5GB for [3..5] * kudu
+  export KUDU_MEM_LIMIT_MB=1024
+  # 1.625GB for HMS + hive server
+  export HIVE_METASTORE_MEM_LIMIT_MB=128
+  export HIVE_SERVER_MEM_LIMIT_MB=1536
+  # 0.625GB for 3 * regionserver + master server + zookeeper
+  export HBASE_DAEMON_MEM_LIMIT_MB=128
+  # 0.125GB for sentry
+  export SENTRY_MEM_LIMIT_MB=128
+else
+  # Use 31.75GB otherwise
+  # 21GB for 3 * impalad
+  export IMPALAD_MEM_LIMIT_MB=7168
+  # <= 2GB for [3..5] * datanode + namenode + yarn + kms
+  export HADOOP_DAEMON_MEM_LIMIT_MB=256
+  # <= 5GB for [3..5] * kudu
+  export KUDU_MEM_LIMIT_MB=1024
+  # 2.25GB for HMS + hive server
+  export HIVE_METASTORE_MEM_LIMIT_MB=256
+  export HIVE_SERVER_MEM_LIMIT_MB=2048
+  # 1.25GB for 3 * regionserver + master server + zookeeper
+  export HBASE_DAEMON_MEM_LIMIT_MB=256
+  # 0.25GB for sentry
+  export SENTRY_MEM_LIMIT_MB=256
+fi
+
 # A marker in the environment to prove that we really did source this file
 export IMPALA_CONFIG_SOURCED=1
 

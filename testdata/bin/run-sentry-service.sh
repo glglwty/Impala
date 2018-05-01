@@ -33,7 +33,8 @@ $IMPALA_HOME/testdata/bin/kill-sentry-service.sh
 # Sentry picks up JARs from the HADOOP_CLASSPATH and not the CLASSPATH.
 export HADOOP_CLASSPATH=${POSTGRES_JDBC_DRIVER}
 # Start the service.
-${SENTRY_HOME}/bin/sentry --command service -c ${SENTRY_SERVICE_CONFIG} > "${LOGDIR}"/sentry.out 2>&1 &
+HADOOP_OPTS="-Xmx${SENTRY_MEM_LIMIT_MB}m" ${SENTRY_HOME}/bin/sentry --command service -c \
+  ${SENTRY_SERVICE_CONFIG} > "${LOGDIR}"/sentry.out 2>&1 &
 
 # Wait for the service to come online
 "$JAVA" -cp $CLASSPATH org.apache.impala.testutil.SentryServicePinger \

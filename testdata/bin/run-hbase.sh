@@ -39,7 +39,7 @@ export HBASE_PID_DIR=${HBASE_LOGDIR}
 if [[ $IMPALA_MINICLUSTER_PROFILE == 3 ]]; then
   export HBASE_CLASSPATH=${HADOOP_CLASSPATH}
 fi
-export HBASE_HEAPSIZE=1g
+export HBASE_HEAPSIZE=${HBASE_DAEMON_MEM_LIMIT_MB}m
 EOF
 
 # Put zookeeper things in the logs/cluster/zoo directory.

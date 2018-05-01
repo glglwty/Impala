@@ -236,9 +236,12 @@ def start_impalad_instances(cluster_size, num_coordinators, use_exclusive_coordi
   # memory choice here to max out at 12GB. This should be sufficient for tests.
   #
   # Beware that ASAN builds use more memory than regular builds.
-  mem_limit = int(0.7 * psutil.virtual_memory().total / cluster_size)
-  mem_limit = min(12 * 1024 * 1024 * 1024, mem_limit)
-
+  env_mem_limit_mb = os.environ.get('IMPALAD_MEM_LIMIT_MB')
+  if env_mem_limit_mb is not None:
+    mem_limit_bytes = int(env_mem_limit_mb) * 1024 * 1024
+  else:
+    mem_limit_bytes = int(0.7 * psutil.virtual_memory().total / cluster_size)
+    mem_limit_bytes = min(12 * 1024 * 1024 * 1024, mem_limit_bytes)
   delay_list = []
   if options.catalog_init_delays != "":
     delay_list = [delay.strip() for delay in options.catalog_init_delays.split(",")]
@@ -265,7 +268,7 @@ def start_impalad_instances(cluster_size, num_coordinators, use_exclusive_coordi
     # impalad args from the --impalad_args flag. Also replacing '#ID' with the instance.
     param_args = (" ".join(options.impalad_args)).replace("#ID", str(i))
     args = "--mem_limit=%s %s %s %s %s" %\
-          (mem_limit,  # Goes first so --impalad_args will override it.
+          (mem_limit_bytes,  # Goes first so --impalad_args will override it.
            build_impalad_logging_args(i, service_name), build_jvm_args(i),
            build_impalad_port_args(i), param_args)
     if options.kudu_master_hosts:

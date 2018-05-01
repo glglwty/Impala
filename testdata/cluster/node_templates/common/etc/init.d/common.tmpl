@@ -39,6 +39,15 @@ export CATALINA_OPTS+=" -D${KILL_CLUSTER_MARKER}"
 : ${SERVICE_NAME=$(basename "$0")}
 PID_FILE="$PID_DIR/$SERVICE_NAME"
 
+# Force minicluster processes to have a maximum heap.
+# If unset, on large machines, the JVM default
+# is 1/4th of the RAM (or so), and processes like DataNode
+# end up never garbage collecting.
+export HADOOP_DAEMON_MEM_LIMIT_MB=${HADOOP_DAEMON_MEM_LIMIT_MB}
+export KUDU_MEM_LIMIT_MB=${KUDU_MEM_LIMIT_MB}
+export HADOOP_HEAPSIZE_MIN=$((${HADOOP_DAEMON_MEM_LIMIT_MB}/2))m
+export HADOOP_HEAPSIZE_MAX=${HADOOP_DAEMON_MEM_LIMIT_MB}m
+
 function do_start {
   local CMD="$1"
   shift

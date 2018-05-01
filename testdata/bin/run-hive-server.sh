@@ -65,21 +65,19 @@ ${CLUSTER_BIN}/kill-hive-server.sh &> /dev/null
 # Starts a Hive Metastore Server on the specified port.
 # To debug log4j2 loading issues, add to HADOOP_CLIENT_OPTS:
 #   -Dorg.apache.logging.log4j.simplelog.StatusLogger.level=TRACE
-HADOOP_CLIENT_OPTS="-Xmx2024m -Dhive.log.file=hive-metastore.log" hive \
-  --service metastore -p $HIVE_METASTORE_PORT > ${LOGDIR}/hive-metastore.out 2>&1 &
+HADOOP_CLIENT_OPTS="-Xmx${HIVE_METASTORE_MEM_LIMIT_MB}m -Dhive.log.file=hive-metastore.log" \
+  hive --service metastore -p $HIVE_METASTORE_PORT > ${LOGDIR}/hive-metastore.out 2>&1 &
 
 # Wait for the Metastore to come up because HiveServer2 relies on it being live.
 ${CLUSTER_BIN}/wait-for-metastore.py --transport=${METASTORE_TRANSPORT}
 
 if [ ${ONLY_METASTORE} -eq 0 ]; then
-  # Starts a HiveServer2 instance on the port specified by the HIVE_SERVER2_THRIFT_PORT
-  # environment variable. HADOOP_HEAPSIZE should be set to at least 2048 to avoid OOM
-  # when loading ORC tables like widerow.
   if [[ $IMPALA_MINICLUSTER_PROFILE == 2 ]]; then
-    HADOOP_HEAPSIZE="2048" hive --service hiveserver2 > ${LOGDIR}/hive-server2.out 2>&1 &
-  elif [[ $IMPALA_MINICLUSTER_PROFILE == 3 ]]; then
-    HADOOP_CLIENT_OPTS="-Xmx2048m -Dhive.log.file=hive-server2.log" hive \
+    HADOOP_HEAPSIZE="$HIVE_SERVER_MEM_LIMIT_MB" hive \
       --service hiveserver2 > ${LOGDIR}/hive-server2.out 2>&1 &
+  elif [[ $IMPALA_MINICLUSTER_PROFILE == 3 ]]; then
+    HADOOP_CLIENT_OPTS="-Xmx${HIVE_SERVER_MEM_LIMIT_MB}m -Dhive.log.file=hive-server2.log" \
+      hive --service hiveserver2 > ${LOGDIR}/hive-server2.out 2>&1 &
   fi
 
   # Wait for the HiveServer2 service to come up because callers of this script
