@@ -88,6 +88,9 @@ public class FeSupport {
   public native static boolean NativeAddPendingTopicItem(long nativeCatalogServerPtr,
       String key, long version, byte[] serializationBuffer, boolean deleted);
 
+  public native static boolean NativeAddObjToCatalogUpdateResult(
+      byte[] serializationBuffer, long nativeTCatalogUpdateResultPtr, boolean deleted);
+
   // Get a catalog object update from the backend. A pair of isDeletion flag and
   // serialized TCatalogObject is returned.
   public native static Pair<Boolean, ByteBuffer> NativeGetNextCatalogObjectUpdate(

@@ -27,6 +27,8 @@
 
 #include "common/names.h"
 
+DECLARE_bool(compact_catalog_topic);
+
 using boost::algorithm::to_upper_copy;
 
 namespace impala {
@@ -250,6 +252,25 @@ Status DecompressCatalogObject(const uint8_t* src, uint32_t size, string* dst) {
   RETURN_IF_ERROR(decompressor->ProcessBlock(true, size - sizeof(uint32_t),
       src + sizeof(uint32_t), &decompressed_len, &decompressed_data_ptr));
   return Status::OK();
+}
+
+bool AddCatalogObjectToCatalogUpdateResult(const uint8_t* serialized_object,
+    uint32_t size, TCatalogUpdateResult* result, bool is_delete) {
+  vector<string>& target_vector = 
+      is_delete ? result->removed_catalog_objects : result->updated_catalog_objects;
+  if (FLAGS_compact_catalog_topic) {
+    std::string out;
+    Status status = CompressCatalogObject(serialized_object, size, &out);
+    if (!status.ok()) {
+      LOG(ERROR) << "Error compressing topic item: " << status.GetDetail();
+      return false;
+    }
+    target_vector.emplace_back(std::move(out));
+  } else {
+    target_vector.emplace_back(
+        reinterpret_cast<const char*>(serialized_object), static_cast<size_t>(size));
+  }
+  return true;
 }
 
 }

@@ -110,6 +110,10 @@ Status CompressCatalogObject(const uint8_t* src, uint32_t size, std::string* dst
 Status DecompressCatalogObject(const uint8_t* src, uint32_t size, std::string* dst)
     WARN_UNUSED_RESULT;
 
+
+bool AddCatalogObjectToCatalogUpdateResult(const uint8_t* serialized_object,
+    uint32_t size, TCatalogUpdateResult* out, bool is_delete);
+
 }
 
 #endif

@@ -458,6 +458,22 @@ Java_org_apache_impala_service_FeSupport_NativeAddPendingTopicItem(JNIEnv* env,
   return static_cast<jboolean>(true);
 }
 
+// Add a catalog update to pending_topic_updates_.
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_org_apache_impala_service_FeSupport_NativeAddObjToCatalogUpdateResult(JNIEnv* env,
+    jclass caller_class, jbyteArray serialization_buffer,
+    jlong native_TCatalogUpdateResult_ptr, jboolean deleted) {
+  JniScopedArrayCritical obj_buf;
+  if (!JniScopedArrayCritical::Create(env, serialization_buffer, &obj_buf)) {
+    return static_cast<jboolean>(false);
+  }
+  return static_cast<jboolean>(AddCatalogObjectToCatalogUpdateResult(obj_buf.get(),
+      static_cast<uint32_t>(obj_buf.size()),
+      reinterpret_cast<TCatalogUpdateResult*>(native_TCatalogUpdateResult_ptr),
+      deleted));
+}
+
 // Get the next catalog update pointed by 'callback_ctx'.
 extern "C"
 JNIEXPORT jobject JNICALL
@@ -589,6 +605,11 @@ static JNINativeMethod native_methods[] = {
       const_cast<char*>("NativeAddPendingTopicItem"),
       const_cast<char*>("(JLjava/lang/String;J[BZ)Z"),
       (void*)::Java_org_apache_impala_service_FeSupport_NativeAddPendingTopicItem
+  },
+  {
+      const_cast<char*>("NativeAddObjToCatalogUpdateResult"),
+      const_cast<char*>("([BJZ)Z"),
+      (void*)::Java_org_apache_impala_service_FeSupport_NativeAddObjToCatalogUpdateResult
   },
   {
       const_cast<char*>("NativeGetNextCatalogObjectUpdate"),

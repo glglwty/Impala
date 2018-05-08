@@ -57,11 +57,11 @@ struct TCatalogUpdateResult {
   // True if this is a result of an INVALIDATE METADATA operation.
   4: required bool is_invalidate
 
-  // The resulting TCatalogObjects that were added or modified, if applicable.
-  5: optional list<CatalogObjects.TCatalogObject> updated_catalog_objects
+  // The resulting serialized and optionally compressed TCatalogObjects that were added.
+  5: required list<binary> updated_catalog_objects
 
-  // The resulting TCatalogObjects that were removed, if applicable.
-  6: optional list<CatalogObjects.TCatalogObject> removed_catalog_objects
+  // The resulting serialized and optionally compressed TCatalogObjects that were removed.
+  6: required list<binary> removed_catalog_objects
 }
 
 // Request for executing a DDL operation (CREATE, ALTER, DROP).
