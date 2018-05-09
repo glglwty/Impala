@@ -21,10 +21,12 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.impala.authorization.SentryConfig;
 import org.apache.impala.authorization.User;
 import org.apache.impala.catalog.CatalogException;
@@ -278,5 +280,9 @@ public class JniCatalog {
   public byte[] getCatalogUsage() throws ImpalaException, TException {
     TSerializer serializer = new TSerializer(protocolFactory_);
     return serializer.serialize(catalog_.getCatalogUsage());
+  }
+
+  public ByteBuffer[] kRpcCall(byte[] methodName, ByteBuffer[] byteBuffers) {
+
   }
 }

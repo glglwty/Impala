@@ -19,6 +19,8 @@
 
 #include <list>
 #include <string>
+#include <kudu/util/slice.h>
+#include <gen-cpp/common.pb.h>
 
 #include "common/logging.h"
 #include "rpc/jni-thrift-util.h"
@@ -66,7 +68,8 @@ Catalog::Catalog() {
     {"getCatalogDelta", "([B)[B", &get_catalog_delta_id_},
     {"getCatalogUsage", "()[B", &get_catalog_usage_id_},
     {"getCatalogVersion", "()J", &get_catalog_version_id_},
-    {"prioritizeLoad", "([B)V", &prioritize_load_id_}};
+    {"prioritizeLoad", "([B)V", &prioritize_load_id_},
+    {"kRpcCall", "([BLjava/nio/ByteBuffer;)Ljava/nio/Buffer;", &krpc_call_id_}};
 
   JNIEnv* jni_env = getJNIEnv();
   // Create an instance of the java class JniCatalog
@@ -160,4 +163,29 @@ Status Catalog::PrioritizeLoad(const TPrioritizeLoadRequest& req) {
 
 Status Catalog::SentryAdminCheck(const TSentryAdminCheckRequest& req) {
   return JniUtil::CallJniMethod(catalog_, sentry_admin_check_id_, req);
+}
+
+Status Catalog::KRpcCall(int num_sidecars, kudu::rpc::InboundCall* incoming) {
+  JNIEnv* jni_env = getJNIEnv();
+  const std::string& method_name = incoming->remote_method().method_name();
+  jbyteArray method_name_buf = jni_env->NewByteArray(static_cast<jsize>(method_name.size()));
+  jni_env->SetByteArrayRegion(method_name_buf, 0, static_cast<jsize>(method_name.size()), static_cast<jbyte*>(method_name.data()));
+  JniLocalFrame jni_frame;
+  jni_frame.push(jni_env);
+  jclass byte_buffer_class = jni_env->FindClass("java/nio/ByteBuffer");
+  jobjectArray req_bufs = jni_env->NewObjectArray(num_sidecars, byte_buffer_class, nullptr);
+  for (int i = 0; i < num_sidecars; i ++) {
+    kudu::Slice slice;
+    incoming->GetInboundSidecar(i, &slice);
+    jobject sidecar = jni_env->NewDirectByteBuffer(static_cast<void*>(slice.data()), slice.size());
+    jni_env->SetObjectArrayElement(req_bufs, i, sidecar);
+  }
+  auto resp_bufs = static_cast<jobjectArray>(jni_env->CallObjectMethod(
+      catalog_, krpc_call_id_, method_name_buf, req_bufs));
+  int resp_num_bufs = jni_env->GetArrayLength(resp_bufs);
+  auto resp = std::make_unique<BinaryCallPB>();
+  resp->set_sidecar_size(resp_num_bufs);
+  // RespondSuccess() has no callback, no does it copy the sidecars, so we have to copy here.
+  incoming->AddOutboundSidecar()
+
 }

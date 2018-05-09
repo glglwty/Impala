@@ -28,6 +28,7 @@
 #include "gen-cpp/Frontend_types.h"
 #include "gen-cpp/Types_types.h"
 #include "catalog/catalog.h"
+#include "kudu/rpc/service_if.h"
 #include "statestore/statestore-subscriber.h"
 #include "util/condition-variable.h"
 #include "util/metrics.h"
@@ -200,6 +201,13 @@ class CatalogServer {
   /// <host>:25020/table_metrics?name=foo.bar
   void TableMetricsUrlCallback(const Webserver::ArgumentMap& args,
       rapidjson::Document* document);
+};
+
+class KRpcCatalogServiceIf : public kudu::rpc::ServiceIf {
+  Catalog* catalog_;
+ public:
+  void Handle(kudu::rpc::InboundCall* incoming) override;
+  string service_name() const override;
 };
 
 }

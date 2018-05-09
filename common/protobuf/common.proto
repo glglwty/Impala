@@ -37,3 +37,7 @@ enum CompressionType {
   NONE = 0; // No compression.
   LZ4 = 1;
 };
+
+message BinaryCallPB {
+   required int32 sidecar_size = 1;
+}

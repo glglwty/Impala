@@ -19,6 +19,7 @@
 #define IMPALA_CATALOG_CATALOG_H
 
 #include <jni.h>
+#include <kudu/rpc/inbound_call.h>
 
 #include "gen-cpp/Frontend_types.h"
 #include "gen-cpp/CatalogInternalService_types.h"
@@ -112,6 +113,8 @@ class Catalog {
   /// was an error executing the request.
   Status SentryAdminCheck(const TSentryAdminCheckRequest& req);
 
+  Status KRpcCall(int num_sidecars, kudu::rpc::InboundCall* incoming);
+
  private:
   /// Descriptor of Java Catalog class itself, used to create a new instance.
   jclass catalog_class_;
@@ -130,6 +133,7 @@ class Catalog {
   jmethodID get_functions_id_; // JniCatalog.getFunctions()
   jmethodID prioritize_load_id_; // JniCatalog.prioritizeLoad()
   jmethodID sentry_admin_check_id_; // JniCatalog.checkUserSentryAdmin()
+  jmethodID krpc_call_id_;
   jmethodID catalog_ctor_;
 };
 

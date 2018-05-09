@@ -22,10 +22,12 @@
 
 #include "catalog/catalog-util.h"
 #include "exec/read-write-util.h"
+#include "kudu/rpc/inbound_call.h"
 #include "statestore/statestore-subscriber.h"
 #include "util/debug-util.h"
 #include "util/logging-support.h"
 #include "util/webserver.h"
+#include "gen-cpp/common.pb.h"
 #include "gen-cpp/CatalogInternalService_types.h"
 #include "gen-cpp/CatalogObjects_types.h"
 #include "gen-cpp/CatalogService_types.h"
@@ -497,4 +499,16 @@ bool CatalogServer::AddPendingTopicItem(std::string key, int64_t version,
           << (FLAGS_compact_catalog_topic ?
               Substitute(", compressed size=$0", item.value.size()) : string());
   return true;
+}
+
+string KRpcCatalogServiceIf::service_name() const {
+  return std::__cxx11::string();
+}
+
+void KRpcCatalogServiceIf::Handle(kudu::rpc::InboundCall* incoming) {
+  auto req = std::make_unique<BinaryCallPB>();
+  if (PREDICT_FALSE(!ParseParam(incoming, req.get()))) {
+    return;
+  }
+  catalog_->KRpcCall(req->sidecar_size(), incoming);
 }
