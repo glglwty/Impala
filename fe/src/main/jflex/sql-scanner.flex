@@ -260,38 +260,43 @@ import org.apache.impala.thrift.TReservedWordsVersion;
     for (Map.Entry<String, Integer> entry : keywordMap.entrySet()) {
       tokenIdMap.put(entry.getValue(), entry.getKey().toUpperCase());
     }
-    // add non-keyword tokens
-    tokenIdMap.put(SqlParserSymbols.IDENT, "IDENTIFIER");
+    // add non-keyword tokens. Please keep this in the same order as they are used in this
+    // file.
+    tokenIdMap.put(SqlParserSymbols.EOF, "EOF");
+    tokenIdMap.put(SqlParserSymbols.DOTDOTDOT, "...");
     tokenIdMap.put(SqlParserSymbols.COLON, ":");
     tokenIdMap.put(SqlParserSymbols.SEMICOLON, ";");
     tokenIdMap.put(SqlParserSymbols.COMMA, "COMMA");
-    tokenIdMap.put(SqlParserSymbols.BITNOT, "~");
+    tokenIdMap.put(SqlParserSymbols.DOT, ".");
+    tokenIdMap.put(SqlParserSymbols.STAR, "*");
     tokenIdMap.put(SqlParserSymbols.LPAREN, "(");
     tokenIdMap.put(SqlParserSymbols.RPAREN, ")");
     tokenIdMap.put(SqlParserSymbols.LBRACKET, "[");
     tokenIdMap.put(SqlParserSymbols.RBRACKET, "]");
-    tokenIdMap.put(SqlParserSymbols.DECIMAL_LITERAL, "DECIMAL LITERAL");
-    tokenIdMap.put(SqlParserSymbols.INTEGER_LITERAL, "INTEGER LITERAL");
+    tokenIdMap.put(SqlParserSymbols.DIVIDE, "/");
+    tokenIdMap.put(SqlParserSymbols.MOD, "%");
+    tokenIdMap.put(SqlParserSymbols.ADD, "+");
+    tokenIdMap.put(SqlParserSymbols.SUBTRACT, "-");
+    tokenIdMap.put(SqlParserSymbols.BITAND, "&");
+    tokenIdMap.put(SqlParserSymbols.BITOR, "|");
+    tokenIdMap.put(SqlParserSymbols.BITXOR, "^");
+    tokenIdMap.put(SqlParserSymbols.BITNOT, "~");
+    tokenIdMap.put(SqlParserSymbols.EQUAL, "=");
     tokenIdMap.put(SqlParserSymbols.NOT, "!");
     tokenIdMap.put(SqlParserSymbols.LESSTHAN, "<");
     tokenIdMap.put(SqlParserSymbols.GREATERTHAN, ">");
     tokenIdMap.put(SqlParserSymbols.UNMATCHED_STRING_LITERAL, "UNMATCHED STRING LITERAL");
-    tokenIdMap.put(SqlParserSymbols.MOD, "%");
-    tokenIdMap.put(SqlParserSymbols.ADD, "+");
-    tokenIdMap.put(SqlParserSymbols.DIVIDE, "/");
-    tokenIdMap.put(SqlParserSymbols.EQUAL, "=");
-    tokenIdMap.put(SqlParserSymbols.STAR, "*");
-    tokenIdMap.put(SqlParserSymbols.BITOR, "|");
-    tokenIdMap.put(SqlParserSymbols.DOT, ".");
-    tokenIdMap.put(SqlParserSymbols.DOTDOTDOT, "...");
-    tokenIdMap.put(SqlParserSymbols.STRING_LITERAL, "STRING LITERAL");
-    tokenIdMap.put(SqlParserSymbols.EOF, "EOF");
-    tokenIdMap.put(SqlParserSymbols.SUBTRACT, "-");
-    tokenIdMap.put(SqlParserSymbols.BITAND, "&");
-    tokenIdMap.put(SqlParserSymbols.UNEXPECTED_CHAR, "Unexpected character");
-    tokenIdMap.put(SqlParserSymbols.BITXOR, "^");
+    tokenIdMap.put(SqlParserSymbols.NOTEQUAL, "!=");
+    tokenIdMap.put(SqlParserSymbols.INTEGER_LITERAL, "INTEGER LITERAL");
     tokenIdMap.put(SqlParserSymbols.NUMERIC_OVERFLOW, "NUMERIC OVERFLOW");
+    tokenIdMap.put(SqlParserSymbols.DECIMAL_LITERAL, "DECIMAL LITERAL");
     tokenIdMap.put(SqlParserSymbols.EMPTY_IDENT, "EMPTY IDENTIFIER");
+    tokenIdMap.put(SqlParserSymbols.IDENT, "IDENTIFIER");
+    tokenIdMap.put(SqlParserSymbols.STRING_LITERAL, "STRING LITERAL");
+    tokenIdMap.put(SqlParserSymbols.COMMENTED_PLAN_HINT_START,
+        "COMMENTED_PLAN_HINT_START");
+    tokenIdMap.put(SqlParserSymbols.COMMENTED_PLAN_HINT_END, "COMMENTED_PLAN_HINT_END");
+    tokenIdMap.put(SqlParserSymbols.UNEXPECTED_CHAR, "Unexpected character");
 
     // Initilize reservedWords. For impala 2.11, reserved words = keywords.
     if (reservedWordsVersion == TReservedWordsVersion.IMPALA_2_11) {
@@ -370,7 +375,7 @@ import org.apache.impala.thrift.TReservedWordsVersion;
   }
 
   static boolean isReserved(String token) {
-    return reservedWords.contains(token.toLowerCase());
+    return token != null && reservedWords.contains(token.toLowerCase());
   }
 
   static boolean isKeyword(Integer tokenId) {
