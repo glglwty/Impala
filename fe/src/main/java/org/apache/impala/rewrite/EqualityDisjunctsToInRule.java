@@ -77,14 +77,16 @@ public class EqualityDisjunctsToInRule implements ExprRewriteRule {
         inPred.getChildren().subList(1, inPred.getChildren().size()));
     if (Expr.IS_EXPR_EQ_LITERAL_PREDICATE.apply(otherPred)) {
       newInList.add(otherPred.getChild(1));
-    } else
-      if (otherPred instanceof InPredicate && !((InPredicate) otherPred).isNotIn()
-          && !otherPred.contains(Subquery.class)) {
-        newInList.addAll(
-            otherPred.getChildren().subList(1, otherPred.getChildren().size()));
-      } else {
+    } else if (otherPred instanceof InPredicate && !((InPredicate) otherPred).isNotIn()
+        && !otherPred.contains(Subquery.class)) {
+      if (newInList.size() + otherPred.getChildren().size() > Expr.EXPR_CHILDREN_LIMIT) {
         return null;
       }
+      newInList.addAll(
+          otherPred.getChildren().subList(1, otherPred.getChildren().size()));
+    } else {
+      return null;
+    }
 
     return new InPredicate(inPred.getChild(0), newInList, false);
   }
