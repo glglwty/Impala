@@ -172,11 +172,13 @@ public class HdfsScanNode extends ScanNode {
   // the Parquet count(*) optimization can be applied.
   private final AggregateInfo aggInfo_;
 
-  // Number of partitions, files and bytes scanned. Set in computeScanRangeLocations().
-  // Might not match 'partitions_' due to table sampling.
+  // Number of (EC) partitions, files and bytes scanned. Set in
+  // computeScanRangeLocations(). Might not match 'partitions_' due to table sampling.
   private int numPartitions_ = 0;
   private long totalFiles_ = 0;
+  private long totalEcFiles_ = 0;
   private long totalBytes_ = 0;
+  private long totalEcBytes_ = 0;
 
   // File formats scanned. Set in computeScanRangeLocations().
   private Set<HdfsFileFormat> fileFormats_;
@@ -749,7 +751,9 @@ public class HdfsScanNode extends ScanNode {
     scanRanges_ = Lists.newArrayList();
     numPartitions_ = (sampledFiles != null) ? sampledFiles.size() : partitions_.size();
     totalFiles_ = 0;
+    totalEcFiles_ = 0;
     totalBytes_ = 0;
+    totalEcBytes_= 0;
     largestScanRangeBytes_ = 0;
     maxScanRangeNumRows_ = -1;
     fileFormats_ = Sets.newHashSet();
@@ -780,6 +784,10 @@ public class HdfsScanNode extends ScanNode {
       totalBytes_ += partitionBytes;
       totalFiles_ += fileDescs.size();
       for (FileDescriptor fileDesc: fileDescs) {
+        if (fileDesc.getIsEc()) {
+          ++totalEcFiles_;
+          totalEcBytes_ += fileDesc.getFileLength();
+        }
         boolean fileDescMissingDiskIds = false;
         for (int j = 0; j < fileDesc.getNumFileBlocks(); ++j) {
           FbFileBlock block = fileDesc.getFbFileBlock(j);
@@ -1123,6 +1131,10 @@ public class HdfsScanNode extends ScanNode {
           numPartitions_, table.getPartitions().size() - 1, totalFiles_,
           PrintUtils.printBytes(totalBytes_)));
       output.append("\n");
+      if (totalEcFiles_ != 0) {
+        output.append(String.format("%sEC files=%s size=%s\n", detailPrefix,
+            totalEcFiles_, PrintUtils.printBytes(totalEcBytes_)));
+      }
       if (!conjuncts_.isEmpty()) {
         output.append(String.format("%spredicates: %s\n", detailPrefix,
             getExplainString(conjuncts_)));
