@@ -487,7 +487,7 @@ class TestParquet(ImpalaTestSuite):
   @SkipIfADLS.hdfs_block_size
   @SkipIfIsilon.hdfs_block_size
   @SkipIfLocal.multiple_impalad
-  @SkipIfEC.fix_later
+  @SkipIfEC.block_size
   def test_misaligned_parquet_row_groups(self, vector):
     """IMPALA-3989: Test that no warnings are issued when misaligned row groups are
     encountered. Make sure that 'NumScannersWithNoReads' counters are set to the number of
@@ -544,7 +544,7 @@ class TestParquet(ImpalaTestSuite):
   @SkipIfADLS.hdfs_block_size
   @SkipIfIsilon.hdfs_block_size
   @SkipIfLocal.multiple_impalad
-  @SkipIfEC.fix_later
+  @SkipIfEC.block_size
   def test_multiple_blocks(self, vector):
     # For IMPALA-1881. The table functional_parquet.lineitem_multiblock has 3 blocks, so
     # each impalad should read 1 scan range.
@@ -559,7 +559,7 @@ class TestParquet(ImpalaTestSuite):
   @SkipIfADLS.hdfs_block_size
   @SkipIfIsilon.hdfs_block_size
   @SkipIfLocal.multiple_impalad
-  @SkipIfEC.fix_later
+  @SkipIfEC.block_size
   def test_multiple_blocks_one_row_group(self, vector):
     # For IMPALA-1881. The table functional_parquet.lineitem_multiblock_one_row_group has
     # 3 blocks but only one row group across these blocks. We test to see that only one
@@ -959,7 +959,7 @@ class TestOrc(ImpalaTestSuite):
 
   @SkipIfS3.hdfs_block_size
   @SkipIfADLS.hdfs_block_size
-  @SkipIfEC.fix_later
+  @SkipIfEC.block_size
   @SkipIfIsilon.hdfs_block_size
   @SkipIfLocal.multiple_impalad
   def test_misaligned_orc_stripes(self, vector, unique_database):

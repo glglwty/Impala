@@ -88,7 +88,7 @@ class TestNestedTypes(ImpalaTestSuite):
     a 3-node HDFS minicluster."""
     self.run_test_case('QueryTest/nested-types-tpch-mem-limit', vector)
 
-  @SkipIfEC.fix_later
+  @SkipIfEC.block_size
   def test_parquet_stats(self, vector):
     """Queries that test evaluation of Parquet row group statistics."""
     self.run_test_case('QueryTest/nested-types-parquet-stats', vector)

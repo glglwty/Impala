@@ -146,7 +146,9 @@ class SkipIfBuildType:
       reason="Tests depends on debug build startup option.")
 
 class SkipIfEC:
+  block_size = pytest.mark.skipif(IS_EC, reason="The unit of an EC scan is a block group,"
+      " the size of which is 3X regular block size in the minicluster.")
+  hdfs_caching = pytest.mark.skipif(IS_EC, reason="HDFS caching doesn't work with EC. "
+      "This is an HDFS bug.")
   remote_read = pytest.mark.skipif(IS_EC, reason="EC files are read remotely and "
       "features relying on local read do not work.")
-  oom = pytest.mark.skipif(IS_EC, reason="Probably broken by HDFS-13540.")
-  fix_later = pytest.mark.skipif(IS_EC, reason="It should work but doesn't.")

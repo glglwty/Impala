@@ -386,7 +386,7 @@ class TestAdmissionController(TestAdmissionControllerBase, HS2TestSuite):
 
   @SkipIfS3.hdfs_block_size
   @SkipIfADLS.hdfs_block_size
-  @SkipIfEC.fix_later
+  @SkipIfEC.block_size
   @pytest.mark.execute_serially
   @CustomClusterTestSuite.with_args(
       impalad_args=impalad_admission_ctrl_flags(max_requests=1, max_queued=1,
