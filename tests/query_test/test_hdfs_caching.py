@@ -35,7 +35,7 @@ from tests.util.shell_util import exec_process
 @SkipIfADLS.caching
 @SkipIfIsilon.caching
 @SkipIfLocal.caching
-@SkipIfEC.fix_later
+@SkipIfEC.hdfs_caching
 class TestHdfsCaching(ImpalaTestSuite):
   @classmethod
   def get_workload(self):
