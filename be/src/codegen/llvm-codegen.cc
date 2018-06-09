@@ -912,6 +912,139 @@ int LlvmCodeGen::ReplaceCallSites(
   return replaced;
 }
 
+llvm::Function* LlvmCodeGen::ReplaceCallSitesRecursive(llvm::Function* caller,
+    llvm::Function* old_fn, llvm::Function* new_fn) {
+  // This function finds all the functions between 'caller' and 'old_fn' and make clones
+  // of them. Call sites between these functions are replaced with the cloned functions.
+  // Call sites of 'old_fn' are replaced with 'new_fn'. Functions between 'caller' and
+  // 'old_fn' are found by the Tarjan SCC algorithm. A DFS is performed to find all the
+  // SCCs reachable from 'caller'. We track whether 'old_fn' is reachable from the
+  // function being searched through tree and cross edges. After the search of the subtree
+  // of a SCC root is finished, because there is no outgoing back edge from a SCC root,
+  // 'old_fn' is reachable from this SCC iff 'old_fn' is reachable from the SCC root by
+  // tree and cross edges. This way we can find out all the functions that have a path
+  // to 'old_fn' and a path from 'caller'.
+  DCHECK(!is_compiled_);
+  DCHECK(caller->getParent() == module_);
+  DCHECK(caller != nullptr);
+  // The mapping from the old to the new fn.
+  llvm::ValueToValueMapTy old_new_fn_mapping;
+  old_new_fn_mapping.insert({old_fn, llvm::WeakTrackingVH(new_fn)});
+
+  struct FunctionInfo {
+    FunctionInfo(uint64_t dfs_index, uint64_t low_link) : dfs_index(dfs_index),
+        low_link(low_link), old_fn_reachable(false), on_unassigned_stack(true) {}
+    uint64_t dfs_index;
+    uint64_t low_link;
+    // For functions whose SCC membership hasn't been figured out, this indicates whether
+    // old_fn is reachable from this function through currently discovered tree edges and
+    // cross edges.
+    // For functions whose SCC membership has been known, this indicates whether 'old_fn'
+    // is reachable from this function.
+    bool old_fn_reachable;
+    bool on_unassigned_stack;
+  };
+  std::unordered_map<llvm::Function*, FunctionInfo> function_info;
+  struct DfsStackElem {
+    DfsStackElem(llvm::Function* f, const llvm::inst_iterator& iter,
+        bool cross_tree_to_old_fn) : f(f), iter(iter) {}
+    llvm::Function* f;
+    llvm::inst_iterator iter;
+  };
+  // The callee will return the resulting FunctionalCaller to the caller through this
+  // iterator, so that the caller doesn't need another data structure to remember who it's
+  // calling.
+  auto return_value = function_info.end();
+  std::stack<DfsStackElem> dfs_stack;
+  // Functions we've discovered but don't know which SCC it belongs to.
+  std::stack<llvm::Function*> unassigned_stack;
+  // List of functions between 'caller' and 'old_fn'
+  std::vector<llvm::Function*> functions_to_remap;
+  // The mapping between the old and the new cloned functions.
+  llvm::ValueToValueMapTy function_mapping;
+  dfs_stack.emplace(caller, inst_begin(caller), false);
+  uint64_t dfs_ordinal = 0;
+  while (!dfs_stack.empty()) {
+    auto fn_info = function_info.find(dfs_stack.top().f);
+    if (fn_info == function_info.end()) {
+      // Initialize the newly discovered function.
+      bool inserted;
+      std::tie(fn_info, inserted) =
+          function_info.emplace(dfs_stack.top().f, FunctionInfo{dfs_ordinal, dfs_ordinal});
+      DCHECK(inserted);
+      unassigned_stack.emplace(dfs_stack.top().f);
+      dfs_ordinal += 1;
+    } else if (return_value != function_info.end()) {
+      // We just returned from a tree edge. Take the child's low link.
+      fn_info->second.low_link = std::min(fn_info->second.low_link,
+          return_value->second.low_link);
+      fn_info->second.old_fn_reachable |= return_value->second.old_fn_reachable;
+      return_value = function_info.end();
+    }
+    llvm::Function* next_callee = nullptr;
+    for (; !dfs_stack.top().iter.atEnd(); ++dfs_stack.top().iter) {
+      if (llvm::isa<llvm::CallInst>(&*dfs_stack.top().iter)) {
+        next_callee = reinterpret_cast<llvm::CallInst*>(&*dfs_stack.top().iter)->
+            getCalledFunction();
+      } else if (llvm::isa<llvm::InvokeInst>(&*dfs_stack.top().iter)) {
+        next_callee = reinterpret_cast<llvm::InvokeInst*>(&*dfs_stack.top().iter)->
+            getCalledFunction();
+      } else {
+        // Not a inter-function control flow transferring instruction.
+        continue;
+      }
+      // Found a function to recurse into.
+      if (next_callee != nullptr && next_callee != old_fn) break;
+      // Found a callsite of old_fn.
+      fn_info->second.old_fn_reachable = true;
+    }
+    if (dfs_stack.top().iter.atEnd()) {
+      if (fn_info->second.dfs_index == fn_info->second.low_link) {
+        llvm::Function* unassigned_top = nullptr;
+        do {
+          unassigned_top = unassigned_stack.top();
+          if (fn_info->second.old_fn_reachable) {
+            // old_fn is reachable from unassigned_top if it's reachable from the SCC root
+            // through tree and cross edges.
+            auto unassigned_top_info = function_info.find(unassigned_top);
+            DCHECK(unassigned_top_info != function_info.end());
+            unassigned_top_info->second.old_fn_reachable = true;
+            unassigned_top_info->second.on_unassigned_stack = false;
+            // Clone the function and remap 'old_fn' to 'new_fn'.
+            auto new_function = llvm::CloneFunction(unassigned_top, old_new_fn_mapping);
+            new_function->copyAttributesFrom(unassigned_top);
+            functions_to_remap.emplace_back(new_function);
+            function_mapping.insert({unassigned_top, llvm::WeakTrackingVH(new_function)});
+          }
+          unassigned_stack.pop();
+        } while (unassigned_top != dfs_stack.top().f);
+      }
+      return_value = fn_info;
+      dfs_stack.pop();
+    } else {
+      ++dfs_stack.top().iter;
+      auto callee_info = function_info.find(next_callee);
+      if (callee_info == function_info.end()) {
+        // Found a tree edge. Push the stack and DFS from it.
+        dfs_stack.emplace(next_callee, inst_begin(next_callee), false);
+      } else {
+        if (callee_info->second.on_unassigned_stack) {
+          // Found a back edge or a cross edge to an unassigned node. Take its DFS index.
+          fn_info->second.low_link = std::min(fn_info->second.low_link,
+              callee_info->second.dfs_index);
+        }
+        fn_info->second.old_fn_reachable |= callee_info->second.old_fn_reachable;
+      }
+    }
+  }
+  DCHECK(return_value != function_info.end() && return_value->second.old_fn_reachable);
+  // Fix the call sites between cloned functions.
+  for (auto f : functions_to_remap) {
+    RemapFunction(*f, function_mapping, llvm::RF_IgnoreMissingLocals);
+  }
+  return llvm::cast<llvm::Function>(&*function_mapping[caller]);
+}
+
 int LlvmCodeGen::ReplaceCallSitesWithValue(
     llvm::Function* caller, llvm::Value* replacement, const string& target_name) {
   DCHECK(!is_compiled_);

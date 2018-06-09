@@ -109,7 +109,7 @@ void SortedRunMerger::Heapify(int parent_index) {
   int least_child;
   // Find the least child of parent.
   if (right_index >= min_heap_.size() ||
-      comparator_.Less(
+      comparator_.MaybeCodegenedLess(
           min_heap_[left_index]->current_row(), min_heap_[right_index]->current_row())) {
     least_child = left_index;
   } else {
@@ -118,7 +118,7 @@ void SortedRunMerger::Heapify(int parent_index) {
 
   // If the parent is out of place, swap it with the least child and invoke
   // Heapify recursively.
-  if (comparator_.Less(min_heap_[least_child]->current_row(),
+  if (comparator_.MaybeCodegenedLess(min_heap_[least_child]->current_row(),
           min_heap_[parent_index]->current_row())) {
     iter_swap(min_heap_.begin() + least_child, min_heap_.begin() + parent_index);
     Heapify(least_child);

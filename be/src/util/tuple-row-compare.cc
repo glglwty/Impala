@@ -29,39 +29,40 @@
 using namespace impala;
 using namespace strings;
 
-Status TupleRowComparator::Open(ObjectPool* pool, RuntimeState* state,
+Status TupleRowComparator::Prepare(ObjectPool* pool, RuntimeState* state,
     MemPool* expr_perm_pool, MemPool* expr_results_pool) {
-  if (ordering_expr_evals_lhs_.empty()) {
-    RETURN_IF_ERROR(ScalarExprEvaluator::Create(ordering_exprs_, state, pool,
-        expr_perm_pool, expr_results_pool, &ordering_expr_evals_lhs_));
-    RETURN_IF_ERROR(ScalarExprEvaluator::Open(ordering_expr_evals_lhs_, state));
-  }
+  RETURN_IF_ERROR(ScalarExprEvaluator::Create(ordering_exprs_, state, pool,
+      expr_perm_pool, expr_results_pool, &ordering_expr_evals_lhs_));
+  RETURN_IF_ERROR(ScalarExprEvaluator::Create(ordering_exprs_, state, pool,
+      expr_perm_pool, expr_results_pool, &ordering_expr_evals_rhs_));
   DCHECK_EQ(ordering_exprs_.size(), ordering_expr_evals_lhs_.size());
-  if (ordering_expr_evals_rhs_.empty()) {
-    RETURN_IF_ERROR(ScalarExprEvaluator::Clone(pool, state, expr_perm_pool,
-        expr_results_pool, ordering_expr_evals_lhs_, &ordering_expr_evals_rhs_));
-  }
-  DCHECK_EQ(ordering_expr_evals_lhs_.size(), ordering_expr_evals_rhs_.size());
+  DCHECK_EQ(ordering_exprs_.size(), ordering_expr_evals_rhs_.size());
+  return Status::OK();
+}
+
+
+Status TupleRowComparator::Open(RuntimeState* state) {
+  RETURN_IF_ERROR(ScalarExprEvaluator::Open(ordering_expr_evals_lhs_, state));
+  RETURN_IF_ERROR(ScalarExprEvaluator::Open(ordering_expr_evals_rhs_, state));
   return Status::OK();
 }
 
 void TupleRowComparator::Close(RuntimeState* state) {
-  ScalarExprEvaluator::Close(ordering_expr_evals_rhs_, state);
   ScalarExprEvaluator::Close(ordering_expr_evals_lhs_, state);
+  ScalarExprEvaluator::Close(ordering_expr_evals_rhs_, state);
 }
 
 int TupleRowComparator::CompareInterpreted(
     const TupleRow* lhs, const TupleRow* rhs) const {
   DCHECK_EQ(ordering_exprs_.size(), ordering_expr_evals_lhs_.size());
-  DCHECK_EQ(ordering_expr_evals_lhs_.size(), ordering_expr_evals_rhs_.size());
-  for (int i = 0; i < ordering_expr_evals_lhs_.size(); ++i) {
+  for (int i = 0; i < ordering_exprs_.size(); ++i) {
     void* lhs_value = ordering_expr_evals_lhs_[i]->GetValue(lhs);
     void* rhs_value = ordering_expr_evals_rhs_[i]->GetValue(rhs);
 
-    // The sort order of NULLs is independent of asc/desc.
-    if (lhs_value == NULL && rhs_value == NULL) continue;
-    if (lhs_value == NULL && rhs_value != NULL) return nulls_first_[i];
-    if (lhs_value != NULL && rhs_value == NULL) return -nulls_first_[i];
+    // The sort order of null is independent of asc/desc.
+    if (lhs_value == nullptr && rhs_value == nullptr) continue;
+    if (lhs_value == nullptr) return nulls_first_[i];
+    if (rhs_value == nullptr) return -nulls_first_[i];
 
     int result = RawValue::Compare(lhs_value, rhs_value, ordering_exprs_[i]->type());
     if (!is_asc_[i]) result = -result;
@@ -71,15 +72,15 @@ int TupleRowComparator::CompareInterpreted(
   return 0; // fully equivalent key
 }
 
-Status TupleRowComparator::Codegen(RuntimeState* state) {
-  llvm::Function* fn;
-  LlvmCodeGen* codegen = state->codegen();
-  DCHECK(codegen != NULL);
-  RETURN_IF_ERROR(CodegenCompare(codegen, &fn));
-  codegend_compare_fn_ = state->obj_pool()->Add(new CompareFn);
-  codegen->AddFunctionToJit(fn, reinterpret_cast<void**>(codegend_compare_fn_));
-  return Status::OK();
+Status TupleRowComparator::Codegen(impala::RuntimeState* state) {
+    llvm::Function* fn;
+    LlvmCodeGen* codegen = state->codegen();
+    DCHECK(codegen != NULL);
+    RETURN_IF_ERROR(CodegenCompare(codegen, &fn));
+    codegen->AddFunctionToJit(fn, reinterpret_cast<void**>(&codegend_compare_fn_));
+    return Status::OK();
 }
+
 
 // Codegens an unrolled version of Compare(). Uses codegen'd key exprs and injects
 // nulls_first_ and is_asc_ values.
@@ -214,55 +215,48 @@ Status TupleRowComparator::CodegenCompare(LlvmCodeGen* codegen, llvm::Function**
     }
   }
 
-  // Construct function signature (note that this is different than the interpreted
-  // Compare() function signature):
-  // int Compare(ScalarExprEvaluator** ordering_expr_evals_lhs,
-  //     ScalarExprEvaluator** ordering_expr_evals_rhs,
-  //     TupleRow* lhs, TupleRow* rhs)
-  llvm::PointerType* expr_evals_type =
-      codegen->GetStructPtrPtrType<ScalarExprEvaluator>();
+  // Construct function signature):
+  // int Compare(TupleRowComparator* this, TupleRow* lhs, TupleRow* rhs)
   llvm::PointerType* tuple_row_type = codegen->GetStructPtrType<TupleRow>();
   LlvmCodeGen::FnPrototype prototype(codegen, "Compare", codegen->i32_type());
-  prototype.AddArgument("ordering_expr_evals_lhs", expr_evals_type);
-  prototype.AddArgument("ordering_expr_evals_rhs", expr_evals_type);
+  // 'this' is used to comply with the signature of CompareInterpreted() and is not used.
+  prototype.AddArgument("this", codegen->GetStructPtrType<TupleRowComparator>());
   prototype.AddArgument("lhs", tuple_row_type);
   prototype.AddArgument("rhs", tuple_row_type);
 
   LlvmBuilder builder(context);
-  llvm::Value* args[4];
+  llvm::Value* args[3];
   *fn = prototype.GeneratePrototype(&builder, args);
-  llvm::Value* lhs_evals_arg = args[0];
-  llvm::Value* rhs_evals_arg = args[1];
-  llvm::Value* lhs_arg = args[2];
-  llvm::Value* rhs_arg = args[3];
+  llvm::Value* lhs_arg = args[1];
+  llvm::Value* rhs_arg = args[2];
+
+  llvm::PointerType* expr_eval_type = codegen->GetStructPtrType<ScalarExprEvaluator>();
 
   // Unrolled loop over each key expr
   for (int i = 0; i < ordering_exprs.size(); ++i) {
     // The start of the next key expr after this one. Used to implement "continue" logic
     // in the unrolled loop.
     llvm::BasicBlock* next_key_block = llvm::BasicBlock::Create(context, "next_key", *fn);
-
-    // Call key_fns[i](ordering_expr_evals_lhs[i], lhs_arg)
-    llvm::Value* lhs_eval = codegen->CodegenArrayAt(&builder, lhs_evals_arg, i);
-    llvm::Value* lhs_args[] = {lhs_eval, lhs_arg};
+    llvm::Value* eval_lhs = codegen->CastPtrToLlvmPtr(expr_eval_type,
+        ordering_expr_evals_lhs_[i]);
+    llvm::Value* eval_rhs = codegen->CastPtrToLlvmPtr(expr_eval_type,
+        ordering_expr_evals_rhs_[i]);
+    // Call key_fns[i](ordering_expr_evals_[i], lhs_arg)
     CodegenAnyVal lhs_value = CodegenAnyVal::CreateCallWrapped(codegen, &builder,
-        ordering_exprs[i]->type(), key_fns[i], lhs_args, "lhs_value");
-
-    // Call key_fns[i](ordering_expr_evals_rhs[i], rhs_arg)
-    llvm::Value* rhs_eval = codegen->CodegenArrayAt(&builder, rhs_evals_arg, i);
-    llvm::Value* rhs_args[] = {rhs_eval, rhs_arg};
+        ordering_exprs[i]->type(), key_fns[i], {eval_lhs, lhs_arg}, "lhs_value");
+    // Call key_fns[i](ordering_expr_evals_[i], rhs_arg)
     CodegenAnyVal rhs_value = CodegenAnyVal::CreateCallWrapped(codegen, &builder,
-        ordering_exprs[i]->type(), key_fns[i], rhs_args, "rhs_value");
+        ordering_exprs[i]->type(), key_fns[i], {eval_rhs, rhs_arg}, "rhs_value");
 
-    // Handle NULLs if necessary
+    // Handle nullptrs if necessary
     llvm::Value* lhs_null = lhs_value.GetIsNull();
     llvm::Value* rhs_null = rhs_value.GetIsNull();
-    // if (lhs_value == NULL && rhs_value == NULL) continue;
+    // if (lhs_value == nullptr && rhs_value == nullptr) continue;
     llvm::Value* both_null = builder.CreateAnd(lhs_null, rhs_null, "both_null");
     llvm::BasicBlock* non_null_block =
         llvm::BasicBlock::Create(context, "non_null", *fn, next_key_block);
     builder.CreateCondBr(both_null, next_key_block, non_null_block);
-    // if (lhs_value == NULL && rhs_value != NULL) return nulls_first_[i];
+    // if (lhs_value == nullptr && rhs_value != nullptr) return nulls_first_[i];
     builder.SetInsertPoint(non_null_block);
     llvm::BasicBlock* lhs_null_block =
         llvm::BasicBlock::Create(context, "lhs_null", *fn, next_key_block);
@@ -271,7 +265,7 @@ Status TupleRowComparator::CodegenCompare(LlvmCodeGen* codegen, llvm::Function**
     builder.CreateCondBr(lhs_null, lhs_null_block, lhs_non_null_block);
     builder.SetInsertPoint(lhs_null_block);
     builder.CreateRet(builder.getInt32(nulls_first_[i]));
-    // if (lhs_value != NULL && rhs_value == NULL) return -nulls_first_[i];
+    // if (lhs_value != nullptr && rhs_value == nullptr) return -nulls_first_[i];
     builder.SetInsertPoint(lhs_non_null_block);
     llvm::BasicBlock* rhs_null_block =
         llvm::BasicBlock::Create(context, "rhs_null", *fn, next_key_block);
@@ -301,9 +295,11 @@ Status TupleRowComparator::CodegenCompare(LlvmCodeGen* codegen, llvm::Function**
   }
   builder.CreateRet(builder.getInt32(0));
   *fn = codegen->FinalizeFunction(*fn);
-  if (*fn == NULL) {
+  if (*fn == nullptr) {
     return Status("Codegen'd TupleRowComparator::Compare() function failed verification, "
         "see log");
   }
   return Status::OK();
 }
+
+const char* TupleRowComparator::LLVM_CLASS_NAME = "struct.impala::TupleRowComparator";

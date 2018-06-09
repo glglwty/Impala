@@ -356,6 +356,12 @@ class LlvmCodeGen {
   int ReplaceCallSites(llvm::Function* caller, llvm::Function* new_fn,
       const std::string& target_name);
 
+  /// Replace all the callsites of 'old_fn' reachable from 'caller' with 'new_fn'.
+  /// Existing functions are not modified. Instead, all the functions between 'caller' and
+  /// 'old_fn' are cloned.
+  llvm::Function* ReplaceCallSitesRecursive(llvm::Function* caller,
+      llvm::Function* old_fn, llvm::Function* new_fn);
+
   /// Same as ReplaceCallSites(), except replaces the function call instructions with the
   /// boolean value 'constant'.
   int ReplaceCallSitesWithBoolConst(llvm::Function* caller, bool constant,

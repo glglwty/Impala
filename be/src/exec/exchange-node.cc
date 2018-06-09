@@ -94,6 +94,7 @@ Status ExchangeNode::Prepare(RuntimeState* state) {
   if (is_merging_) {
     less_than_.reset(
         new TupleRowComparator(ordering_exprs_, is_asc_order_, nulls_first_));
+    RETURN_IF_ERROR(less_than_->Prepare(pool_, state, expr_perm_pool(), expr_results_pool()));
     AddCodegenDisabledMessage(state);
   }
   return Status::OK();
@@ -103,7 +104,6 @@ void ExchangeNode::Codegen(RuntimeState* state) {
   DCHECK(state->ShouldCodegen());
   ExecNode::Codegen(state);
   if (IsNodeCodegenDisabled()) return;
-
   if (is_merging_) {
     Status codegen_status = less_than_->Codegen(state);
     runtime_profile()->AddCodegenMsg(codegen_status.ok(), codegen_status);
@@ -117,9 +117,8 @@ Status ExchangeNode::Open(RuntimeState* state) {
   if (is_merging_) {
     // CreateMerger() will populate its merging heap with batches from the stream_recvr_,
     // so it is not necessary to call FillInputRowBatch().
-    RETURN_IF_ERROR(
-        less_than_->Open(pool_, state, expr_perm_pool(), expr_results_pool()));
-    RETURN_IF_ERROR(stream_recvr_->CreateMerger(*less_than_.get()));
+    RETURN_IF_ERROR(less_than_->Open(state));
+    RETURN_IF_ERROR(stream_recvr_->CreateMerger(*less_than_));
   } else {
     RETURN_IF_ERROR(FillInputRowBatch(state));
   }
