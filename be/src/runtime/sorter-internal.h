@@ -434,6 +434,9 @@ class Sorter::TupleSorter {
   /// query is cancelled.
   Status Sort(Run* run) WARN_UNUSED_RESULT;
 
+  // Codegen codegened_sort_helper_. It will be called in the place of SortHelper().
+  Status Codegen(llvm::Function* ComparatorLessFn, RuntimeState* state);
+
  private:
   static const int INSERTION_THRESHOLD = 16;
 
@@ -464,6 +467,8 @@ class Sorter::TupleSorter {
   /// can generate 64-bit ints. Quality of randomness doesn't need to be especially
   /// high: Mersenne Twister should be more than adequate.
   std::mt19937_64 rng_;
+
+  Status (*codegened_sort_helper_) (TupleSorter*, TupleIterator, TupleIterator);
 
   /// Wrapper around comparator_.Less(). Also call expr_results_pool_.Clear()
   /// on every 'state_->batch_size()' invocations of comparator_.Less(). Returns true

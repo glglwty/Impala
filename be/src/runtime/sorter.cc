@@ -21,6 +21,8 @@
 #include <boost/random/uniform_int.hpp>
 #include <gutil/strings/substitute.h>
 
+#include "codegen/llvm-codegen.h"
+#include "common/compiler-util.h"
 #include "runtime/bufferpool/reservation-tracker.h"
 #include "runtime/exec-env.h"
 #include "runtime/mem-tracker.h"
@@ -751,7 +753,8 @@ Sorter::TupleSorter::TupleSorter(Sorter* parent, const TupleRowComparator& comp,
     tuple_size_(tuple_size),
     comparator_(comp),
     num_comparisons_till_free_(state->batch_size()),
-    state_(state) {
+    state_(state),
+    codegened_sort_helper_(nullptr) {
   temp_tuple_buffer_ = new uint8_t[tuple_size];
   swap_buffer_ = new uint8_t[tuple_size];
 }
@@ -765,8 +768,29 @@ Status Sorter::TupleSorter::Sort(Run* run) {
   DCHECK(run->is_finalized());
   DCHECK(!run->is_sorted());
   run_ = run;
-  RETURN_IF_ERROR(SortHelper(TupleIterator::Begin(run_), TupleIterator::End(run_)));
+  if (codegened_sort_helper_ != nullptr) {
+    RETURN_IF_ERROR(codegened_sort_helper_(this,
+        TupleIterator::Begin(run_), TupleIterator::End(run_)));
+  } else {
+    RETURN_IF_ERROR(SortHelper(TupleIterator::Begin(run_), TupleIterator::End(run_)));
+  }
+
   run_->set_sorted();
+  return Status::OK();
+}
+
+Status Sorter::TupleSorter::Codegen(llvm::Function* compare_fn, RuntimeState* state) {
+  LlvmCodeGen* codegen = state->codegen();
+  llvm::Function* sort_helper_fn =
+      codegen->GetFunction(IRFunction::SORTER_SORTHELPER, false);
+  llvm::Function* replaced = codegen->ReplaceCallSitesRecursively(sort_helper_fn,
+      codegen->GetFunction(IRFunction::COMPARE_INTERPRETED, false), compare_fn);
+  replaced = codegen->FinalizeFunction(replaced);
+  if (replaced == nullptr) {
+    return Status("TupleSorter::Codegen(): codegen'd Compare() function failed "
+                  "verification, see log");
+  }
+  codegen->AddFunctionToJit(replaced, reinterpret_cast<void**>(&codegened_sort_helper_));
   return Status::OK();
 }
 
@@ -823,6 +847,7 @@ Status Sorter::Prepare(ObjectPool* obj_pool) {
         PrettyPrinter::Print(state_->query_options().max_row_size, TUnit::BYTES));
   }
   has_var_len_slots_ = sort_tuple_desc->HasVarlenSlots();
+  compare_less_than_.Prepare(&obj_pool_, state_, &expr_perm_pool_, &expr_results_pool_);
   in_mem_tuple_sorter_.reset(
       new TupleSorter(this, compare_less_than_, sort_tuple_desc->byte_size(), state_));
 
@@ -843,14 +868,16 @@ Status Sorter::Prepare(ObjectPool* obj_pool) {
 }
 
 Status Sorter::Codegen(RuntimeState* state) {
-  return compare_less_than_.Codegen(state);
+  llvm::Function* compare_fn;
+  LlvmCodeGen* codegen = state->codegen();
+  RETURN_IF_ERROR(compare_less_than_.CodegenCompare(codegen, &compare_fn));
+  return in_mem_tuple_sorter_->Codegen(compare_fn, state);
 }
 
 Status Sorter::Open() {
   DCHECK(in_mem_tuple_sorter_ != nullptr) << "Not prepared";
   DCHECK(unsorted_run_ == nullptr) << "Already open";
-  RETURN_IF_ERROR(compare_less_than_.Open(&obj_pool_, state_, &expr_perm_pool_,
-      &expr_results_pool_));
+  RETURN_IF_ERROR(compare_less_than_.Open(state_));
   TupleDescriptor* sort_tuple_desc = output_row_desc_->tuple_descriptors()[0];
   unsorted_run_ = run_pool_.Add(new Run(this, sort_tuple_desc, true));
   RETURN_IF_ERROR(unsorted_run_->Init());

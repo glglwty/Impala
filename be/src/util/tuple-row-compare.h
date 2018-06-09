@@ -58,8 +58,7 @@ class ComparatorWrapper {
 };
 
 /// Compares two TupleRows based on a set of exprs, in order.
-class TupleRowComparator {
- public:
+struct TupleRowComparator {
   /// 'ordering_exprs': the ordering expressions for tuple comparison.
   /// 'is_asc' determines, for each expr, if it should be ascending or descending sort
   /// order.
@@ -67,60 +66,56 @@ class TupleRowComparator {
   /// other values.
   TupleRowComparator(const std::vector<ScalarExpr*>& ordering_exprs,
       const std::vector<bool>& is_asc, const std::vector<bool>& nulls_first)
-    : ordering_exprs_(ordering_exprs),
-      is_asc_(is_asc),
-      codegend_compare_fn_(nullptr) {
+    : ordering_exprs_(ordering_exprs), is_asc_(is_asc), codegend_compare_fn_(nullptr) {
     DCHECK_EQ(is_asc_.size(), ordering_exprs.size());
     for (bool null_first : nulls_first) nulls_first_.push_back(null_first ? -1 : 1);
   }
 
   /// Create the evaluators for the ordering expressions and store them in 'pool'. The
   /// evaluators use 'expr_perm_pool' and 'expr_results_pool' for permanent and result
-  /// allocations made by exprs respectively. 'state' is passed in for initialization
-  /// of the evaluator.
-  Status Open(ObjectPool* pool, RuntimeState* state, MemPool* expr_perm_pool,
+  /// allocations made by exprs respectively.
+  Status Prepare(ObjectPool* pool, RuntimeState* state, MemPool* expr_perm_pool,
       MemPool* expr_results_pool);
+
+  /// Initialize the evaluators using 'state'.
+  Status Open(RuntimeState* state);
 
   /// Release resources held by the ordering expressions' evaluators.
   void Close(RuntimeState* state);
 
-  /// Codegens a Compare() function for this comparator that is used in Compare().
-  Status Codegen(RuntimeState* state);
-
-  /// Returns a negative value if lhs is less than rhs, a positive value if lhs is
-  /// greater than rhs, or 0 if they are equal. All exprs (ordering_exprs_lhs_ and
-  /// ordering_exprs_rhs_) must have been prepared and opened before calling this,
-  /// i.e. 'sort_key_exprs' in the constructor must have been opened.
-  int ALWAYS_INLINE Compare(const TupleRow* lhs, const TupleRow* rhs) const {
-    return codegend_compare_fn_ == NULL ?
-        CompareInterpreted(lhs, rhs) :
-        (*codegend_compare_fn_)(ordering_expr_evals_lhs_.data(),
-            ordering_expr_evals_rhs_.data(), lhs, rhs);
-  }
-
   /// Returns true if lhs is strictly less than rhs.
-  /// All exprs (ordering_exprs_lhs_ and ordering_exprs_rhs_) must have been prepared
-  /// and opened before calling this.
+  /// ordering_exprs must have been prepared and opened before calling this.
   /// Force inlining because it tends not to be always inlined at callsites, even in
   /// hot loops.
   bool ALWAYS_INLINE Less(const TupleRow* lhs, const TupleRow* rhs) const {
-    return Compare(lhs, rhs) < 0;
+    return CompareInterpreted(lhs, rhs) < 0;
   }
 
   bool ALWAYS_INLINE Less(const Tuple* lhs, const Tuple* rhs) const {
-    TupleRow* lhs_row = reinterpret_cast<TupleRow*>(&lhs);
-    TupleRow* rhs_row = reinterpret_cast<TupleRow*>(&rhs);
-    return Less(lhs_row, rhs_row);
+    return Less(reinterpret_cast<TupleRow*>(&lhs), reinterpret_cast<TupleRow*>(&rhs));
   }
 
- private:
-  /// Interpreted implementation of Compare().
-  int CompareInterpreted(const TupleRow* lhs, const TupleRow* rhs) const;
-
-  /// Codegen Compare(). Returns a non-OK status if codegen is unsuccessful.
-  /// TODO: inline this at codegen'd callsites instead of indirectly calling via function
-  /// pointer.
+  /// Codegen Compare() and return it via 'fn'. The caller could use it to replace
+  /// cross-compiled CompareInterpreted().
   Status CodegenCompare(LlvmCodeGen* codegen, llvm::Function** fn);
+
+  /// Codegen Compare() and compile it into 'codegend_compare_fn_'. The resulting function
+  /// pointer can be used by MaybeCodegenedLess() in circumstances where Compare() hasn't
+  /// been inlined.
+  Status Codegen(RuntimeState* state);
+
+  /// Use codegened compare function if available. Cross-compiled callers should call
+  /// Less() directly and replace the CompareInterpreted() with a codegened Compare().
+  bool ALWAYS_INLINE MaybeCodegenedLess(const TupleRow* lhs, const TupleRow* rhs) const{
+      return codegend_compare_fn_ == nullptr ? Less(lhs, rhs) :
+          codegend_compare_fn_(this, lhs, rhs) < 0;
+  }
+
+  /// Struct name in LLVM IR.
+  static const char* LLVM_CLASS_NAME;
+
+  /// Interpreted implementation of Compare().
+  int IR_NO_INLINE CompareInterpreted(const TupleRow* lhs, const TupleRow* rhs) const;
 
   /// References to ordering expressions owned by the Exec node which owns this
   /// TupleRowComparator.
@@ -134,16 +129,10 @@ class TupleRowComparator {
   const std::vector<bool>& is_asc_;
   std::vector<int8_t> nulls_first_;
 
-  /// We store a pointer to the codegen'd function pointer (adding an extra level of
-  /// indirection) so that copies of this TupleRowComparator will have the same pointer to
-  /// the codegen'd function. This is necessary because the codegen'd function pointer is
-  /// only set after the IR module is compiled. Without the indirection, if this
-  /// TupleRowComparator is copied before the module is compiled, the copy will still have
-  /// its function pointer set to NULL. The function pointer is allocated from the runtime
-  /// state's object pool so that its lifetime will be >= that of any copies.
-  typedef int (*CompareFn)(ScalarExprEvaluator* const*, ScalarExprEvaluator* const*,
-      const TupleRow*, const TupleRow*);
-  CompareFn* codegend_compare_fn_;
+  using CompareFn = int (*) (const TupleRowComparator*, const TupleRow*, const TupleRow*);
+  CompareFn codegend_compare_fn_;
+
+  DISALLOW_COPY_AND_ASSIGN(TupleRowComparator);
 };
 
 /// Compares the equality of two Tuples, going slot by slot.
