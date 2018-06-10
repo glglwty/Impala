@@ -82,39 +82,28 @@ Status TupleRowComparator::Codegen(impala::RuntimeState* state) {
 }
 
 
-// Codegens an unrolled version of Compare(). Uses codegen'd key exprs and injects
-// nulls_first_ and is_asc_ values.
+// Codegens an unrolled version of CompareInterpreted(). Uses codegen'd key exprs and
+// injects nulls_first_ and is_asc_ values.
 //
 // Example IR for comparing an int column then a float column:
 //
-// ; Function Attrs: alwaysinline
-// define i32 @Compare(%"class.impala::ScalarExprEvaluator"**
-//                         %ordering_expr_evals_lhs,
-//                     %"class.impala::ScalarExprEvaluator"**
-//                         %ordering_expr_evals_rhs,
-//                     %"class.impala::TupleRow"* %lhs,
-//                     %"class.impala::TupleRow"* %rhs) #20 {
+// define i32 @Compare(%"struct.impala::TupleRowComparator"* %this,
+//     %"class.impala::TupleRow"* %lhs, %"class.impala::TupleRow"* %rhs) #40 {
 // entry:
-//   %type13 = alloca %"struct.impala::ColumnType"
-//   %0 = alloca float
-//   %1 = alloca float
-//   %type = alloca %"struct.impala::ColumnType"
-//   %2 = alloca i32
-//   %3 = alloca i32
-//   %4 = getelementptr %"class.impala::ScalarExprEvaluator"**
-//            %ordering_expr_evals_lhs, i32 0
-//   %5 = load %"class.impala::ScalarExprEvaluator"** %4
-//   %lhs_value = call i64 @GetSlotRef(
-//       %"class.impala::ScalarExprEvaluator"* %5, %"class.impala::TupleRow"* %lhs)
-//   %6 = getelementptr %"class.impala::ScalarExprEvaluator"**
-//            %ordering_expr_evals_rhs, i32 0
-//   %7 = load %"class.impala::ScalarExprEvaluator"** %6
-//   %rhs_value = call i64 @GetSlotRef(
-//       %"class.impala::ScalarExprEvaluator"* %7, %"class.impala::TupleRow"* %rhs)
-//   %is_null = trunc i64 %lhs_value to i1
-//   %is_null1 = trunc i64 %rhs_value to i1
-//   %both_null = and i1 %is_null, %is_null1
-//   br i1 %both_null, label %next_key, label %non_null
+// %0 = alloca float
+// %1 = alloca float
+// %2 = alloca i32
+// %3 = alloca i32
+// %lhs_value = call i64 @GetSlotRef(%"class.impala::ScalarExprEvaluator"* inttoptr
+//     (i64 165283904 to %"class.impala::ScalarExprEvaluator"*),
+//     %"class.impala::TupleRow"* %lhs)
+// %rhs_value = call i64 @GetSlotRef(%"class.impala::ScalarExprEvaluator"* inttoptr
+//     (i64 165284288 to %"class.impala::ScalarExprEvaluator"*),
+//     %"class.impala::TupleRow"* %rhs)
+// %is_null = trunc i64 %lhs_value to i1
+// %is_null1 = trunc i64 %rhs_value to i1
+// %both_null = and i1 %is_null, %is_null1
+//    br i1 %both_null, label %next_key, label %non_null
 //
 // non_null:                                         ; preds = %entry
 //   br i1 %is_null, label %lhs_null, label %lhs_non_null
@@ -129,76 +118,64 @@ Status TupleRowComparator::Codegen(impala::RuntimeState* state) {
 //   ret i32 -1
 //
 // rhs_non_null:                                     ; preds = %lhs_non_null
-//   %8 = ashr i64 %lhs_value, 32
-//   %9 = trunc i64 %8 to i32
-//   store i32 %9, i32* %3
-//   %10 = bitcast i32* %3 to i8*
-//   %11 = ashr i64 %rhs_value, 32
-//   %12 = trunc i64 %11 to i32
-//   store i32 %12, i32* %2
-//   %13 = bitcast i32* %2 to i8*
-//   store %"struct.impala::ColumnType" { i32 5, i32 -1, i32 -1, i32 -1,
-//                                        %"class.std::vector.44" zeroinitializer,
-//                                        %"class.std::vector.49" zeroinitializer },
-//         %"struct.impala::ColumnType"* %type
-//   %result = call i32 @_ZN6impala8RawValue7CompareEPKvS2_RKNS_10ColumnTypeE(
-//       i8* %10, i8* %13, %"struct.impala::ColumnType"* %type)
-//   %14 = icmp ne i32 %result, 0
-//   br i1 %14, label %result_nonzero, label %next_key
+// %4 = ashr i64 %lhs_value, 32
+// %5 = trunc i64 %4 to i32
+// store i32 %5, i32* %3
+// %6 = bitcast i32* %3 to i8*
+// %7 = ashr i64 %rhs_value, 32
+// %8 = trunc i64 %7 to i32
+// store i32 %8, i32* %2
+// %9 = bitcast i32* %2 to i8*
+// %result = call i32 @_ZN6impala8RawValue7CompareEPKvS2_RKNS_10ColumnTypeE(
+//     i8* %6, i8* %9, %"struct.impala::ColumnType"* @type)
+// %10 = icmp ne i32 %result, 0
+// br i1 %10, label %result_nonzero, label %next_key
 //
 // result_nonzero:                                   ; preds = %rhs_non_null
 //   ret i32 %result
 //
 // next_key:                                         ; preds = %rhs_non_null, %entry
-//   %15 = getelementptr %"class.impala::ScalarExprEvaluator"**
-//             %ordering_expr_evals_lhs, i32 1
-//   %16 = load %"class.impala::ScalarExprEvaluator"** %15
-//   %lhs_value3 = call i64 @GetSlotRef1(
-//       %"class.impala::ScalarExprEvaluator"* %16, %"class.impala::TupleRow"* %lhs)
-//   %17 = getelementptr %"class.impala::ScalarExprEvaluator"**
-//            %ordering_expr_evals_rhs, i32 1
-//   %18 = load %"class.impala::ScalarExprEvaluator"** %17
-//   %rhs_value4 = call i64 @GetSlotRef1(
-//       %"class.impala::ScalarExprEvaluator"* %18, %"class.impala::TupleRow"* %rhs)
-//   %is_null5 = trunc i64 %lhs_value3 to i1
-//   %is_null6 = trunc i64 %rhs_value4 to i1
-//   %both_null8 = and i1 %is_null5, %is_null6
-//   br i1 %both_null8, label %next_key2, label %non_null7
+// %lhs_value3 = call i64 @GetSlotRef.1(%"class.impala::ScalarExprEvaluator"* inttoptr
+//     (i64 165284096 to %"class.impala::ScalarExprEvaluator"*),
+//     %"class.impala::TupleRow"* %lhs)
+// %rhs_value4 = call i64 @GetSlotRef.1(%"class.impala::ScalarExprEvaluator"* inttoptr
+//     (i64 165284480 to %"class.impala::ScalarExprEvaluator"*),
+//     %"class.impala::TupleRow"* %rhs)
+// %is_null5 = trunc i64 %lhs_value3 to i1
+// %is_null6 = trunc i64 %rhs_value4 to i1
+// %both_null7 = and i1 %is_null5, %is_null6
+// br i1 %both_null7, label %next_key2, label %non_null8
 //
-// non_null7:                                        ; preds = %next_key
+// non_null8:                                        ; preds = %next_key
 //   br i1 %is_null5, label %lhs_null9, label %lhs_non_null10
 //
-// lhs_null9:                                        ; preds = %non_null7
+// lhs_null9:                                        ; preds = %non_null8
 //   ret i32 1
 //
-// lhs_non_null10:                                   ; preds = %non_null7
+// lhs_non_null10:                                   ; preds = %non_null8
 //   br i1 %is_null6, label %rhs_null11, label %rhs_non_null12
 //
 // rhs_null11:                                       ; preds = %lhs_non_null10
 //   ret i32 -1
 //
 // rhs_non_null12:                                   ; preds = %lhs_non_null10
-//   %19 = ashr i64 %lhs_value3, 32
-//   %20 = trunc i64 %19 to i32
-//   %21 = bitcast i32 %20 to float
-//   store float %21, float* %1
-//   %22 = bitcast float* %1 to i8*
-//   %23 = ashr i64 %rhs_value4, 32
-//   %24 = trunc i64 %23 to i32
-//   %25 = bitcast i32 %24 to float
-//   store float %25, float* %0
-//   %26 = bitcast float* %0 to i8*
-//   store %"struct.impala::ColumnType" { i32 7, i32 -1, i32 -1, i32 -1,
-//                                        %"class.std::vector.44" zeroinitializer,
-//                                        %"class.std::vector.49" zeroinitializer },
-//         %"struct.impala::ColumnType"* %type13
-//   %result14 = call i32 @_ZN6impala8RawValue7CompareEPKvS2_RKNS_10ColumnTypeE(
-//       i8* %22, i8* %26, %"struct.impala::ColumnType"* %type13)
-//   %27 = icmp ne i32 %result14, 0
-//   br i1 %27, label %result_nonzero15, label %next_key2
+// %11 = ashr i64 %lhs_value3, 32
+// %12 = trunc i64 %11 to i32
+// %13 = bitcast i32 %12 to float
+// store float %13, float* %1
+// %14 = bitcast float* %1 to i8*
+// %15 = ashr i64 %rhs_value4, 32
+// %16 = trunc i64 %15 to i32
+// %17 = bitcast i32 %16 to float
+// store float %17, float* %0
+// %18 = bitcast float* %0 to i8*
+// %result13 = call i32 @_ZN6impala8RawValue7CompareEPKvS2_RKNS_10ColumnTypeE(
+//     i8* %14, i8* %18, %"struct.impala::ColumnType"* @type.2)
+// %19 = icmp ne i32 %result13, 0
+// br i1 %19, label %result_nonzero14, label %next_key2
 //
-// result_nonzero15:                                 ; preds = %rhs_non_null12
-//   ret i32 %result14
+// result_nonzero14:                                 ; preds = %rhs_non_null12
+//   ret i32 %result13
 //
 // next_key2:                                        ; preds = %rhs_non_null12, %next_key
 //   ret i32 0
