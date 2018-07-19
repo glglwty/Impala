@@ -46,6 +46,7 @@ import org.apache.thrift.TException;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
+import org.apache.tools.ant.taskdefs.Local;
 
 /**
  * Implementation of FeCatalog which runs within the impalad and fetches metadata

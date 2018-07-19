@@ -56,6 +56,7 @@ import org.apache.impala.catalog.ColumnStats;
 import org.apache.impala.catalog.FeDataSourceTable;
 import org.apache.impala.catalog.FeFsPartition;
 import org.apache.impala.catalog.FeFsTable;
+import org.apache.impala.catalog.FeHBaseTable;
 import org.apache.impala.catalog.FeKuduTable;
 import org.apache.impala.catalog.FeTable;
 import org.apache.impala.catalog.HBaseTable;
@@ -1308,7 +1309,7 @@ public class SingleNodePlanner {
           conjuncts);
       scanNode.init(analyzer);
       return scanNode;
-    } else if (table instanceof HBaseTable) {
+    } else if (table instanceof FeHBaseTable) {
       // HBase table
       scanNode = new HBaseScanNode(ctx_.getNextNodeId(), tblRef.getDesc());
     } else if (tblRef.getTable() instanceof FeKuduTable) {

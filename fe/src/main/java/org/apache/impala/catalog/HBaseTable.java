@@ -82,7 +82,7 @@ import com.google.common.collect.Lists;
  * They will be ordered by family/qualifier.
  *
  */
-public class HBaseTable extends Table {
+public class HBaseTable extends Table implements FeHBaseTable {
   // Maximum deviation from the average to stop querying more regions
   // to estimate the row count
   private static final double DELTA_FROM_AVERAGE = 0.15;
@@ -115,10 +115,10 @@ public class HBaseTable extends Table {
       "org.apache.hadoop.hive.hbase.HBaseStorageHandler";
 
   // Column family of HBase row key
-  private static final String ROW_KEY_COLUMN_FAMILY = ":key";
+  public static final String ROW_KEY_COLUMN_FAMILY = ":key";
 
   // Keep the conf around
-  private final static Configuration hbaseConf_ = HBaseConfiguration.create();
+  public final static Configuration hbaseConf_ = HBaseConfiguration.create();
 
   // Cached column families. Used primarily for speeding up row stats estimation
   // (see IMPALA-4211).
@@ -134,7 +134,7 @@ public class HBaseTable extends Table {
    * one and then sharing it among threads. All operations on a connection are
    * thread-safe.
    */
-  private static class ConnectionHolder {
+  public static class ConnectionHolder {
     private static Connection connection_ = null;
 
     public static synchronized Connection getConnection(Configuration conf)
@@ -151,30 +151,31 @@ public class HBaseTable extends Table {
    * creating a new one for each task and then closing when done.
    */
   public org.apache.hadoop.hbase.client.Table getHBaseTable() throws IOException {
-    return ConnectionHolder.getConnection(hbaseConf_)
-        .getTable(TableName.valueOf(hbaseTableName_));
+    return getHBaseTable(hbaseTableName_);
   }
 
-  private void closeHBaseTable(org.apache.hadoop.hbase.client.Table table) {
+  public static org.apache.hadoop.hbase.client.Table getHBaseTable(String hbaseTableName)
+      throws IOException {
+    return ConnectionHolder.getConnection(hbaseConf_)
+        .getTable(TableName.valueOf(hbaseTableName));
+  }
+
+  private static void closeHBaseTable(org.apache.hadoop.hbase.client.Table table) {
     try {
       table.close();
     } catch (IOException e) {
-      LOG.error("Error closing HBase table: " + hbaseTableName_, e);
+      LOG.error("Error closing HBase table: " + table.getName(), e);
     }
   }
 
   /**
    * Get the cluster status, making sure we close the admin client afterwards.
    */
-  public ClusterStatus getClusterStatus() throws IOException {
-    Admin admin = null;
+  public static ClusterStatus getClusterStatus() throws IOException {
     ClusterStatus clusterStatus = null;
-    try {
-      Connection connection = ConnectionHolder.getConnection(hbaseConf_);
-      admin = connection.getAdmin();
+    Connection connection = ConnectionHolder.getConnection(hbaseConf_);
+    try (Admin admin = connection.getAdmin()) {
       clusterStatus = admin.getClusterStatus();
-    } finally {
-      if (admin != null) admin.close();
     }
     return clusterStatus;
   }
@@ -191,8 +192,8 @@ public class HBaseTable extends Table {
    * columnFamilies/columnQualifiers/columnBinaryEncodings - out parameters that will be
    * filled with the column family, column qualifier and encoding for each column.
    */
-  private void parseColumnMapping(boolean tableDefaultStorageIsBinary,
-      String columnsMappingSpec, List<FieldSchema> fieldSchemas,
+  public static void parseColumnMapping(boolean tableDefaultStorageIsBinary,
+      String columnsMappingSpec, String tblName, List<FieldSchema> fieldSchemas,
       List<String> columnFamilies, List<String> columnQualifiers,
       List<Boolean> colIsBinaryEncoded) throws SerDeException {
     if (columnsMappingSpec == null) {
@@ -253,7 +254,7 @@ public class HBaseTable extends Table {
 
       // Set column binary encoding
       FieldSchema fieldSchema = fieldSchemas.get(i + fsStartIdxOffset);
-      boolean supportsBinaryEncoding = supportsBinaryEncoding(fieldSchema);
+      boolean supportsBinaryEncoding = supportsBinaryEncoding(fieldSchema, tblName);
       if (mapInfo.length == 1) {
         // There is no column level storage specification. Use the table storage spec.
         colIsBinaryEncoded.add(
@@ -298,13 +299,13 @@ public class HBaseTable extends Table {
       columnFamilies.add(0, HBaseSerDe.HBASE_KEY_COL);
       columnQualifiers.add(0, null);
       colIsBinaryEncoded.add(0,
-          supportsBinaryEncoding(fieldSchemas.get(0)) && tableDefaultStorageIsBinary);
+          supportsBinaryEncoding(fieldSchemas.get(0), tblName) && tableDefaultStorageIsBinary);
     }
   }
 
-  private boolean supportsBinaryEncoding(FieldSchema fs) {
+  private static boolean supportsBinaryEncoding(FieldSchema fs, String tblName) {
     try {
-      Type colType = parseColumnType(fs);
+      Type colType = FeCatalogUtils.parseColumnType(fs, tblName);
       // Only boolean, integer and floating point types can use binary storage.
       return colType.isBoolean() || colType.isIntegerType()
           || colType.isFloatingPointType();
@@ -313,13 +314,93 @@ public class HBaseTable extends Table {
     }
   }
 
-  @Override
+  public static List<Column> loadColumns(
+      org.apache.hadoop.hive.metastore.api.Table msTable) throws MetaException, SerDeException {
+    Map<String, String> serdeParams =
+        msTable.getSd().getSerdeInfo().getParameters();
+    String hbaseColumnsMapping = serdeParams.get(HBaseSerDe.HBASE_COLUMNS_MAPPING);
+    if (hbaseColumnsMapping == null) {
+      throw new MetaException("No hbase.columns.mapping defined in Serde.");
+    }
+
+    String hbaseTableDefaultStorageType = msTable.getParameters().get(
+        HBaseSerDe.HBASE_TABLE_DEFAULT_STORAGE_TYPE);
+    boolean tableDefaultStorageIsBinary = false;
+    if (hbaseTableDefaultStorageType != null &&
+        !hbaseTableDefaultStorageType.isEmpty()) {
+      if (hbaseTableDefaultStorageType.equalsIgnoreCase("binary")) {
+        tableDefaultStorageIsBinary = true;
+      } else if (!hbaseTableDefaultStorageType.equalsIgnoreCase("string")) {
+        throw new SerDeException("Error: " +
+            HBaseSerDe.HBASE_TABLE_DEFAULT_STORAGE_TYPE +
+            " parameter must be specified as" +
+            " 'string' or 'binary'; '" + hbaseTableDefaultStorageType +
+            "' is not a valid specification for this table/serde property.");
+      }
+    }
+
+    // Parse HBase column-mapping string.
+    List<FieldSchema> fieldSchemas = msTable.getSd().getCols();
+    List<String> hbaseColumnFamilies = new ArrayList<String>();
+    List<String> hbaseColumnQualifiers = new ArrayList<String>();
+    List<Boolean> hbaseColumnBinaryEncodings = new ArrayList<Boolean>();
+    parseColumnMapping(tableDefaultStorageIsBinary, hbaseColumnsMapping,
+        msTable.getTableName(), fieldSchemas, hbaseColumnFamilies, hbaseColumnQualifiers,
+        hbaseColumnBinaryEncodings);
+    Preconditions.checkState(
+        hbaseColumnFamilies.size() == hbaseColumnQualifiers.size());
+    Preconditions.checkState(fieldSchemas.size() == hbaseColumnFamilies.size());
+
+    // Populate tmp cols in the order they appear in the Hive metastore.
+    // We will reorder the cols below.
+    List<HBaseColumn> tmpCols = Lists.newArrayList();
+    // Store the key column separately.
+    // TODO: Change this to an ArrayList once we support composite row keys.
+    HBaseColumn keyCol = null;
+    for (int i = 0; i < fieldSchemas.size(); ++i) {
+      FieldSchema s = fieldSchemas.get(i);
+      Type t = Type.INVALID;
+      try {
+        t = FeCatalogUtils.parseColumnType(s, msTable.getTableName()) ;
+      } catch (TableLoadingException e) {
+        // Ignore hbase types we don't support yet. We can load the metadata
+        // but won't be able to select from it.
+      }
+      HBaseColumn col = new HBaseColumn(s.getName(), hbaseColumnFamilies.get(i),
+          hbaseColumnQualifiers.get(i), hbaseColumnBinaryEncodings.get(i),
+          t, s.getComment(), -1);
+      if (col.getColumnFamily().equals(ROW_KEY_COLUMN_FAMILY)) {
+        // Store the row key column separately from the rest
+        keyCol = col;
+      } else {
+        tmpCols.add(col);
+      }
+    }
+    Preconditions.checkState(keyCol != null);
+    // The backend assumes that the row key column is always first and
+    // that the remaining HBase columns are ordered by columnFamily,columnQualifier,
+    // so the final position depends on the other mapped HBase columns.
+    // Sort columns and update positions.
+    Collections.sort(tmpCols);
+    keyCol.setPosition(0);
+    List<Column> cols = new ArrayList<>();
+    cols.add(keyCol);
+    // Update the positions of the remaining columns
+    for (int i = 0; i < tmpCols.size(); ++i) {
+      HBaseColumn col = tmpCols.get(i);
+      col.setPosition(i + 1);
+      cols.add(col);
+    }
+    return cols;
+  }
+
   /**
    * For hbase tables, we can support tables with columns we don't understand at
    * all (e.g. map) as long as the user does not select those. This is in contrast
    * to hdfs tables since we typically need to understand all columns to make sense
    * of the file at all.
    */
+  @Override
   public void load(boolean reuseMetadata, IMetaStoreClient client,
       org.apache.hadoop.hive.metastore.api.Table msTbl) throws TableLoadingException {
     Preconditions.checkNotNull(getMetaStoreTable());
@@ -331,86 +412,11 @@ public class HBaseTable extends Table {
       // Warm up the connection and verify the table exists.
       getHBaseTable().close();
       columnFamilies_ = null;
-      Map<String, String> serdeParams =
-          getMetaStoreTable().getSd().getSerdeInfo().getParameters();
-      String hbaseColumnsMapping = serdeParams.get(HBaseSerDe.HBASE_COLUMNS_MAPPING);
-      if (hbaseColumnsMapping == null) {
-        throw new MetaException("No hbase.columns.mapping defined in Serde.");
-      }
-
-      String hbaseTableDefaultStorageType = getMetaStoreTable().getParameters().get(
-          HBaseSerDe.HBASE_TABLE_DEFAULT_STORAGE_TYPE);
-      boolean tableDefaultStorageIsBinary = false;
-      if (hbaseTableDefaultStorageType != null &&
-          !hbaseTableDefaultStorageType.isEmpty()) {
-        if (hbaseTableDefaultStorageType.equalsIgnoreCase("binary")) {
-          tableDefaultStorageIsBinary = true;
-        } else if (!hbaseTableDefaultStorageType.equalsIgnoreCase("string")) {
-          throw new SerDeException("Error: " +
-              HBaseSerDe.HBASE_TABLE_DEFAULT_STORAGE_TYPE +
-              " parameter must be specified as" +
-              " 'string' or 'binary'; '" + hbaseTableDefaultStorageType +
-              "' is not a valid specification for this table/serde property.");
-        }
-      }
-
-      // Parse HBase column-mapping string.
-      List<FieldSchema> fieldSchemas = getMetaStoreTable().getSd().getCols();
-      List<String> hbaseColumnFamilies = new ArrayList<String>();
-      List<String> hbaseColumnQualifiers = new ArrayList<String>();
-      List<Boolean> hbaseColumnBinaryEncodings = new ArrayList<Boolean>();
-      parseColumnMapping(tableDefaultStorageIsBinary, hbaseColumnsMapping, fieldSchemas,
-          hbaseColumnFamilies, hbaseColumnQualifiers, hbaseColumnBinaryEncodings);
-      Preconditions.checkState(
-          hbaseColumnFamilies.size() == hbaseColumnQualifiers.size());
-      Preconditions.checkState(fieldSchemas.size() == hbaseColumnFamilies.size());
-
-      // Populate tmp cols in the order they appear in the Hive metastore.
-      // We will reorder the cols below.
-      List<HBaseColumn> tmpCols = Lists.newArrayList();
-      // Store the key column separately.
-      // TODO: Change this to an ArrayList once we support composite row keys.
-      HBaseColumn keyCol = null;
-      for (int i = 0; i < fieldSchemas.size(); ++i) {
-        FieldSchema s = fieldSchemas.get(i);
-        Type t = Type.INVALID;
-        try {
-          t = parseColumnType(s);
-        } catch (TableLoadingException e) {
-          // Ignore hbase types we don't support yet. We can load the metadata
-          // but won't be able to select from it.
-        }
-        HBaseColumn col = new HBaseColumn(s.getName(), hbaseColumnFamilies.get(i),
-            hbaseColumnQualifiers.get(i), hbaseColumnBinaryEncodings.get(i),
-            t, s.getComment(), -1);
-        if (col.getColumnFamily().equals(ROW_KEY_COLUMN_FAMILY)) {
-          // Store the row key column separately from the rest
-          keyCol = col;
-        } else {
-          tmpCols.add(col);
-        }
-      }
-      Preconditions.checkState(keyCol != null);
-
-      // The backend assumes that the row key column is always first and
-      // that the remaining HBase columns are ordered by columnFamily,columnQualifier,
-      // so the final position depends on the other mapped HBase columns.
-      // Sort columns and update positions.
-      Collections.sort(tmpCols);
+      List<Column> cols = loadColumns(msTable_);
       clearColumns();
-
-      keyCol.setPosition(0);
-      addColumn(keyCol);
-      // Update the positions of the remaining columns
-      for (int i = 0; i < tmpCols.size(); ++i) {
-        HBaseColumn col = tmpCols.get(i);
-        col.setPosition(i + 1);
-        addColumn(col);
-      }
-
+      for (Column col : cols) addColumn(col);
       // Set table stats.
       setTableStats(msTable_);
-
       // since we don't support composite hbase rowkeys yet, all hbase tables have a
       // single clustering col
       numClusteringCols_ = 1;
@@ -440,7 +446,8 @@ public class HBaseTable extends Table {
   /**
    * This method is completely copied from Hive's HBaseStorageHandler.java.
    */
-  private String getHBaseTableName(org.apache.hadoop.hive.metastore.api.Table tbl) {
+  public static String getHBaseTableName(org.apache.hadoop.hive.metastore.api.Table tbl)
+  {
     // Give preference to TBLPROPERTIES over SERDEPROPERTIES
     // (really we should only use TBLPROPERTIES, so this is just
     // for backwards compatibility with the original specs).
@@ -462,8 +469,9 @@ public class HBaseTable extends Table {
    * Estimates the number of rows for a single region and returns a pair with
    * the estimated row count and the estimated size in bytes per row.
    */
-  private Pair<Long, Long> getEstimatedRowStatsForRegion(HRegionLocation location,
-      boolean isCompressed, ClusterStatus clusterStatus) throws IOException {
+  private static <T extends FeHBaseTable> Pair<Long, Long>
+      getEstimatedRowStatsForRegion(HRegionLocation location, boolean isCompressed,
+      ClusterStatus clusterStatus, T tbl) throws IOException {
     HRegionInfo info = location.getRegionInfo();
 
     Scan s = new Scan(info.getStartKey());
@@ -477,7 +485,7 @@ public class HBaseTable extends Table {
     // Try and get deletes too so their size can be counted.
     s.setRaw(false);
 
-    org.apache.hadoop.hbase.client.Table table = getHBaseTable();
+    org.apache.hadoop.hbase.client.Table table = tbl.getHBaseTable();
     ResultScanner rs = table.getScanner(s);
 
     long currentRowSize = 0;
@@ -531,6 +539,10 @@ public class HBaseTable extends Table {
     return new Pair<Long, Long>(estimatedRowCount, (long) bytesPerRow);
   }
 
+  public synchronized Pair<Long, Long> getEstimatedRowStats(byte[] startRowKey,
+      byte[] endRowKey) {
+    return getEstimatedRowStats(startRowKey, endRowKey, this);
+  }
   /**
    * Get an estimate of the number of rows and bytes per row in regions between
    * startRowKey and endRowKey.
@@ -563,8 +575,8 @@ public class HBaseTable extends Table {
    * @return The estimated number of rows in the regions between the row keys (first) and
    *         the estimated row size in bytes (second).
    */
-  public synchronized Pair<Long, Long> getEstimatedRowStats(byte[] startRowKey,
-      byte[] endRowKey) {
+  public static <T extends FeHBaseTable & FeTable> Pair<Long, Long> getEstimatedRowStats(
+      byte[] startRowKey, byte[] endRowKey, T tbl) {
     Preconditions.checkNotNull(startRowKey);
     Preconditions.checkNotNull(endRowKey);
 
@@ -574,16 +586,14 @@ public class HBaseTable extends Table {
 
     org.apache.hadoop.hbase.client.Table table = null;
     try {
-      table = getHBaseTable();
+      table = tbl.getHBaseTable();
       ClusterStatus clusterStatus = getClusterStatus();
 
       // Check to see if things are compressed.
       // If they are we'll estimate a compression factor.
-      if (columnFamilies_ == null) {
-        columnFamilies_ = table.getTableDescriptor().getColumnFamilies();
-      }
-      Preconditions.checkNotNull(columnFamilies_);
-      for (HColumnDescriptor desc : columnFamilies_) {
+      HColumnDescriptor[] columnFamilies = tbl.getColumnFamilies();
+      Preconditions.checkNotNull(tbl.getColumnFamilies());
+      for (HColumnDescriptor desc : columnFamilies) {
         isCompressed |= desc.getCompression() !=  Compression.Algorithm.NONE;
       }
 
@@ -603,7 +613,7 @@ public class HBaseTable extends Table {
           statsSize.count() < locations.size()) {
         HRegionLocation currentLocation = locations.get((int) statsSize.count());
         Pair<Long, Long> tmp = getEstimatedRowStatsForRegion(currentLocation,
-            isCompressed, clusterStatus);
+            isCompressed, clusterStatus, tbl);
         totalEstimatedRows += tmp.first;
         statsSize.addSample(tmp.second);
       }
@@ -635,7 +645,8 @@ public class HBaseTable extends Table {
    * Returns the size of the given region in bytes. Simply returns the storefile size
    * for this region from the ClusterStatus. Returns 0 in case of an error.
    */
-  public long getRegionSize(HRegionLocation location, ClusterStatus clusterStatus) {
+  private static long getRegionSize(HRegionLocation location, ClusterStatus clusterStatus)
+  {
     HRegionInfo info = location.getRegionInfo();
     ServerLoad serverLoad = clusterStatus.getLoad(location.getServerName());
 
@@ -668,13 +679,18 @@ public class HBaseTable extends Table {
   public TTableDescriptor toThriftDescriptor(int tableId, Set<Long> referencedPartitions) {
     TTableDescriptor tableDescriptor =
         new TTableDescriptor(tableId, TTableType.HBASE_TABLE,
-            getTColumnDescriptors(), numClusteringCols_, hbaseTableName_, db_.getName());
-    tableDescriptor.setHbaseTable(getTHBaseTable());
+             getTColumnDescriptors(), numClusteringCols_, hbaseTableName_, db_.getName());
+    tableDescriptor.setHbaseTable(getTHBaseTable(this));
     return tableDescriptor;
   }
 
   public String getHBaseTableName() {
     return hbaseTableName_;
+  }
+
+  @Override
+  public TResultSet getTableStats() {
+    return getTableStats(this);
   }
 
   @Override
@@ -686,14 +702,14 @@ public class HBaseTable extends Table {
   public TTable toThrift() {
     TTable table = super.toThrift();
     table.setTable_type(TTableType.HBASE_TABLE);
-    table.setHbase_table(getTHBaseTable());
+    table.setHbase_table(getTHBaseTable(this));
     return table;
   }
 
-  private THBaseTable getTHBaseTable() {
+  public static <T extends FeHBaseTable> THBaseTable getTHBaseTable(T table) {
     THBaseTable tHbaseTable = new THBaseTable();
-    tHbaseTable.setTableName(hbaseTableName_);
-    for (Column c : getColumns()) {
+    tHbaseTable.setTableName(table.getHBaseTableName());
+    for (Column c : table.getColumns()) {
       HBaseColumn hbaseCol = (HBaseColumn) c;
       tHbaseTable.addToFamilies(hbaseCol.getColumnFamily());
       if (hbaseCol.getColumnQualifier() != null) {
@@ -760,7 +776,7 @@ public class HBaseTable extends Table {
    * SHOW TABLE STATS statement. The schema of the returned TResultSet is set
    * inside this method.
    */
-  public TResultSet getTableStats() {
+  public static <T extends FeHBaseTable> TResultSet getTableStats(T tbl) {
     TResultSet result = new TResultSet();
     TResultSetMetadata resultSchema = new TResultSetMetadata();
     result.setSchema(resultSchema);
@@ -773,9 +789,9 @@ public class HBaseTable extends Table {
 
     org.apache.hadoop.hbase.client.Table table;
     try {
-      table = getHBaseTable();
+      table = tbl.getHBaseTable();
     } catch (IOException e) {
-      LOG.error("Error getting HBase table " + hbaseTableName_, e);
+      LOG.error("Error getting HBase table " + tbl.getHBaseTableName(), e);
       throw new RuntimeException(e);
     }
 
@@ -792,7 +808,7 @@ public class HBaseTable extends Table {
         TResultRowBuilder rowBuilder = new TResultRowBuilder();
         HRegionInfo regionInfo = region.getRegionInfo();
         Pair<Long, Long> estRowStats =
-            getEstimatedRowStatsForRegion(region, false, clusterStatus);
+            getEstimatedRowStatsForRegion(region, false, clusterStatus, tbl);
 
         long numRows = estRowStats.first.longValue();
         long regionSize = getRegionSize(region, clusterStatus);
@@ -842,5 +858,12 @@ public class HBaseTable extends Table {
       return true;
     }
     return false;
+  }
+
+  @Override
+  public HColumnDescriptor[] getColumnFamilies() throws IOException {
+    return columnFamilies_ == null ?
+        (columnFamilies_ = getHBaseTable().getTableDescriptor().getColumnFamilies())
+        : columnFamilies_;
   }
 }

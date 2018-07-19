@@ -35,6 +35,7 @@ import org.apache.impala.analysis.LiteralExpr;
 import org.apache.impala.analysis.SlotDescriptor;
 import org.apache.impala.analysis.StringLiteral;
 import org.apache.impala.analysis.TupleDescriptor;
+import org.apache.impala.catalog.FeHBaseTable;
 import org.apache.impala.catalog.HBaseColumn;
 import org.apache.impala.catalog.HBaseTable;
 import org.apache.impala.catalog.PrimitiveType;
@@ -192,7 +193,7 @@ public class HBaseScanNode extends ScanNode {
   @Override
   public void computeStats(Analyzer analyzer) {
     super.computeStats(analyzer);
-    HBaseTable tbl = (HBaseTable) desc_.getTable();
+    FeHBaseTable tbl = (FeHBaseTable) desc_.getTable();
 
     ValueRange rowRange = keyRanges_.get(0);
     if (isEmpty_) {
@@ -229,7 +230,7 @@ public class HBaseScanNode extends ScanNode {
 
   @Override
   protected String debugString() {
-    HBaseTable tbl = (HBaseTable) desc_.getTable();
+    FeHBaseTable tbl = (FeHBaseTable) desc_.getTable();
     return Objects.toStringHelper(this)
         .add("tid", desc_.getId().asInt())
         .add("hiveTblName", tbl.getFullName())
@@ -278,7 +279,7 @@ public class HBaseScanNode extends ScanNode {
   @Override
   protected void toThrift(TPlanNode msg) {
     msg.node_type = TPlanNodeType.HBASE_SCAN_NODE;
-    HBaseTable tbl = (HBaseTable) desc_.getTable();
+    FeHBaseTable tbl = (FeHBaseTable) desc_.getTable();
     msg.hbase_scan_node =
       new THBaseScanNode(desc_.getId().asInt(), tbl.getHBaseTableName());
     if (!filters_.isEmpty()) {
@@ -299,7 +300,7 @@ public class HBaseScanNode extends ScanNode {
     if (isEmpty_) return;
 
     // Retrieve relevant HBase regions and their region servers
-    HBaseTable tbl = (HBaseTable) desc_.getTable();
+    FeHBaseTable tbl = (FeHBaseTable) desc_.getTable();
     org.apache.hadoop.hbase.client.Table hbaseTbl = null;
     List<HRegionLocation> regionsLoc;
     try {
@@ -403,7 +404,7 @@ public class HBaseScanNode extends ScanNode {
   @Override
   protected String getNodeExplainString(String prefix, String detailPrefix,
       TExplainLevel detailLevel) {
-    HBaseTable table = (HBaseTable) desc_.getTable();
+    FeHBaseTable table = (FeHBaseTable) desc_.getTable();
     StringBuilder output = new StringBuilder();
     if (isEmpty_) {
       output.append(prefix + "empty scan node\n");

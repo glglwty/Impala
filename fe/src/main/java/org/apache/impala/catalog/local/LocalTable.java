@@ -75,6 +75,7 @@ abstract class LocalTable implements FeTable {
       t = new LocalView(db, msTbl);
     } else if (HBaseTable.isHBaseTable(msTbl)) {
       // TODO(todd) support HBase table
+      t = LocalHbaseTable.loadFromHbase(db, msTbl);
     } else if (KuduTable.isKuduTable(msTbl)) {
       // TODO(todd) support kudu table
       t = LocalKuduTable.loadFromKudu(db, msTbl);
