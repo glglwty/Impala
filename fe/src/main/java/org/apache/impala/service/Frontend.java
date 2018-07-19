@@ -81,6 +81,7 @@ import org.apache.impala.catalog.FeDataSource;
 import org.apache.impala.catalog.FeDataSourceTable;
 import org.apache.impala.catalog.FeDb;
 import org.apache.impala.catalog.FeFsTable;
+import org.apache.impala.catalog.FeHBaseTable;
 import org.apache.impala.catalog.FeKuduTable;
 import org.apache.impala.catalog.FeTable;
 import org.apache.impala.catalog.Function;
@@ -746,8 +747,8 @@ public class Frontend {
     FeTable table = getCatalog().getTable(dbName, tableName);
     if (table instanceof FeFsTable) {
       return ((FeFsTable) table).getTableStats();
-    } else if (table instanceof HBaseTable) {
-      return ((HBaseTable) table).getTableStats();
+    } else if (table instanceof FeHBaseTable) {
+      return ((FeHBaseTable) table).getTableStats();
     } else if (table instanceof FeDataSourceTable) {
       return ((FeDataSourceTable) table).getTableStats();
     } else if (table instanceof FeKuduTable) {

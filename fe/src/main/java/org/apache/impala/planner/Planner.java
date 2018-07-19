@@ -32,6 +32,7 @@ import org.apache.impala.analysis.JoinOperator;
 import org.apache.impala.analysis.QueryStmt;
 import org.apache.impala.analysis.SortInfo;
 import org.apache.impala.analysis.TupleId;
+import org.apache.impala.catalog.FeHBaseTable;
 import org.apache.impala.catalog.FeKuduTable;
 import org.apache.impala.catalog.FeTable;
 import org.apache.impala.catalog.HBaseTable;
@@ -200,7 +201,7 @@ public class Planner {
             graph.addTargetColumnLabels(targetTable);
           }
           exprs.addAll(resultExprs);
-        } else if (targetTable instanceof HBaseTable) {
+        } else if (targetTable instanceof FeHBaseTable) {
           graph.addTargetColumnLabels(targetTable);
           exprs.addAll(resultExprs);
         } else {
