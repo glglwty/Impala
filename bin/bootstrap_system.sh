@@ -195,9 +195,6 @@ diff -u /etc/hosts "${NEW_HOSTS}" || true
 sudo cp "${NEW_HOSTS}" /etc/hosts
 rm "${NEW_HOSTS}"
 
-sudo mkdir -p /var/lib/hadoop-hdfs
-sudo chown $(whoami) /var/lib/hadoop-hdfs/
-
 # TODO: restrict this to only the users it is needed for
 echo "* - nofile 1048576" | sudo tee -a /etc/security/limits.conf
 

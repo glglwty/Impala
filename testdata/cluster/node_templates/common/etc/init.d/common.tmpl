@@ -42,7 +42,7 @@ function do_start {
   echo $PID > "$PID_FILE"
   disown -h $PID
   # Give the process some time to die... if thing go wrong it usually takes at least a
-  # few seconds for the process to totallly shutdown
+  # few seconds for the process to totally shutdown
   sleep 5
   if ! pid_exists $PID; then
     echo "Failed to start $SERVICE_NAME. The end of the log ($LOG_FILE) is:"
