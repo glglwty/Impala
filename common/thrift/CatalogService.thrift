@@ -23,6 +23,7 @@ include "JniCatalog.thrift"
 include "Types.thrift"
 include "Status.thrift"
 include "Results.thrift"
+include "hive_metastore.thrift"
 
 // CatalogServer service API and related structs.
 
@@ -234,6 +235,90 @@ struct TGetFunctionsResponse {
   2: optional list<Types.TFunction> functions;
 }
 
+struct TCatalogInfoSelector {
+  1: bool want_db_names
+}
+
+struct TPartialCatalogInfo {
+  1: list<string> db_names
+}
+
+struct TTableInfoSelector {
+  // The response should include the HMS table struct.
+  1: bool want_hms_table
+  // The response should include the list of partition names and IDs.
+  2: bool want_partition_list
+
+  // If set, the response should include information about the given
+  // list of partitions. Must set one of the following 'want_partition_*'
+  // fields.
+  3: optional list<i64> partition_ids
+  // ... each such partition should include metadata (location, etc)
+  4: bool want_partition_metadata
+  // ... each such partition should include its file info
+  5: bool want_partition_files
+
+  // List of columns to fetch stats for.
+  6: optional list<string> want_stats_for_column_names
+}
+
+struct TPartialPartitionInfo {
+  1: required i64 id
+  2: optional string name
+  // Set if want_partition_metadata
+  3: optional hive_metastore.Partition hms_partition
+  4: optional list<CatalogObjects.THdfsFileDesc> file_descriptors
+}
+
+struct TPartialTableInfo {
+  1: optional hive_metastore.Table hms_table
+  2: optional list<TPartialPartitionInfo> partitions
+  3: optional list<hive_metastore.ColumnStatisticsObj> column_stats
+
+  // Each TNetworkAddress is a datanode which contains blocks of a file in the table.
+  // Used so that each THdfsFileBlock can just reference an index in this list rather
+  // than duplicate the list of network address, which helps reduce memory usage.
+  // Only used when partition files are fetched.
+  7: optional list<Types.TNetworkAddress> network_addresses
+}
+
+struct TDbInfoSelector {
+  // The response should include the HMS Database object.
+  1: bool want_hms_database
+  // The response should include the list of table names in the DB.
+  2: bool want_table_names
+  // TODO(todd): function names
+}
+
+struct TPartialDbInfo {
+  1: optional hive_metastore.Database hms_database
+  2: optional list<string> table_names
+}
+
+struct TGetPartialCatalogObjectRequest {
+  1: required CatalogServiceVersion protocol_version = CatalogServiceVersion.V1
+  2: optional TCatalogServiceRequestHeader header
+
+  // A catalog object descriptor: a TCatalogObject with the object name and type fields
+  // set.
+  3: required CatalogObjects.TCatalogObject object_desc
+
+  4: optional TTableInfoSelector table_info_selector
+  5: optional TDbInfoSelector db_info_selector
+  6: optional TCatalogInfoSelector catalog_info_selector
+}
+
+struct TGetPartialCatalogObjectResponse {
+    // The status of the operation, OK if the operation was successful.
+  1: optional Status.TStatus status
+
+  2: optional i64 object_version_number
+  3: optional TPartialTableInfo table_info
+  4: optional TPartialDbInfo db_info
+  5: optional TPartialCatalogInfo catalog_info
+}
+
+
 // Request the complete metadata for a given catalog object. May trigger a metadata load
 // if the object is not already in the catalog cache.
 struct TGetCatalogObjectRequest {
@@ -316,4 +401,6 @@ service CatalogService {
   // TODO: When Sentry Service has a better mechanism to perform these changes this API
   // should be deprecated.
   TSentryAdminCheckResponse SentryAdminCheck(1: TSentryAdminCheckRequest req);
+
+  TGetPartialCatalogObjectResponse GetPartialCatalogObject(1: TGetPartialCatalogObjectRequest req);
 }

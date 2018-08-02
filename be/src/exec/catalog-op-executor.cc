@@ -283,6 +283,20 @@ Status CatalogOpExecutor::GetCatalogObject(const TCatalogObject& object_desc,
   return Status::OK();
 }
 
+Status CatalogOpExecutor::GetPartialCatalogObject(
+    const TGetPartialCatalogObjectRequest& req,
+    TGetPartialCatalogObjectResponse* resp) {
+  const TNetworkAddress& address =
+      MakeNetworkAddress(FLAGS_catalog_service_host, FLAGS_catalog_service_port);
+  Status status;
+  CatalogServiceConnection client(env_->catalogd_client_cache(), address, &status);
+  RETURN_IF_ERROR(status);
+  RETURN_IF_ERROR(
+      client.DoRpc(&CatalogServiceClientWrapper::GetPartialCatalogObject, req, resp));
+  return Status::OK();
+}
+
+
 Status CatalogOpExecutor::PrioritizeLoad(const TPrioritizeLoadRequest& req,
     TPrioritizeLoadResponse* result) {
   const TNetworkAddress& address =

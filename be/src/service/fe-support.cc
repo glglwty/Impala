@@ -523,6 +523,30 @@ Java_org_apache_impala_service_FeSupport_NativePrioritizeLoad(
   return result_bytes;
 }
 
+// Calls in to the catalog server to request partial information about a
+// catalog object.
+extern "C"
+JNIEXPORT jbyteArray JNICALL
+Java_org_apache_impala_service_FeSupport_NativeGetPartialCatalogObject(
+    JNIEnv* env, jclass caller_class, jbyteArray thrift_struct) {
+  TGetPartialCatalogObjectRequest request;
+  THROW_IF_ERROR_RET(DeserializeThriftMsg(env, thrift_struct, &request), env,
+      JniUtil::internal_exc_class(), nullptr);
+
+  CatalogOpExecutor catalog_op_executor(ExecEnv::GetInstance(), NULL, NULL);
+  TGetPartialCatalogObjectResponse result;
+  Status status = catalog_op_executor.GetPartialCatalogObject(request, &result);
+  if (!status.ok()) {
+    THROW_IF_ERROR_RET(status, env, JniUtil::internal_exc_class(), nullptr);
+  }
+
+  jbyteArray result_bytes = NULL;
+  THROW_IF_ERROR_RET(SerializeThriftMsg(env, &result, &result_bytes), env,
+                     JniUtil::internal_exc_class(), result_bytes);
+  return result_bytes;
+}
+
+
 // Used to call native code from the FE to parse and set comma-delimited key=value query
 // options.
 extern "C"
@@ -579,6 +603,11 @@ static JNINativeMethod native_methods[] = {
   {
       const_cast<char*>("NativePrioritizeLoad"), const_cast<char*>("([B)[B"),
       (void*)::Java_org_apache_impala_service_FeSupport_NativePrioritizeLoad
+  },
+  {
+      const_cast<char*>("NativeGetPartialCatalogObject"),
+      const_cast<char*>("([B)[B"),
+      (void*)::Java_org_apache_impala_service_FeSupport_NativeGetPartialCatalogObject
   },
   {
       const_cast<char*>("NativeParseQueryOptions"),

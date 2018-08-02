@@ -31,7 +31,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import org.apache.commons.codec.binary.Base64;
 import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.protocol.CachePoolEntry;
@@ -41,17 +40,19 @@ import org.apache.hadoop.hive.metastore.api.UnknownDBException;
 import org.apache.impala.authorization.SentryConfig;
 import org.apache.impala.catalog.MetaStoreClientPool.MetaStoreClient;
 import org.apache.impala.common.FileSystemUtil;
-import org.apache.impala.common.ImpalaException;
-import org.apache.impala.common.JniUtil;
 import org.apache.impala.common.Pair;
 import org.apache.impala.common.Reference;
 import org.apache.impala.service.FeSupport;
 import org.apache.impala.thrift.TCatalog;
+import org.apache.impala.thrift.TCatalogInfoSelector;
 import org.apache.impala.thrift.TCatalogObject;
 import org.apache.impala.thrift.TCatalogObjectType;
 import org.apache.impala.thrift.TCatalogUpdateResult;
-import org.apache.impala.thrift.TFunction;
+import org.apache.impala.thrift.TDatabase;
 import org.apache.impala.thrift.TGetCatalogUsageResponse;
+import org.apache.impala.thrift.TGetPartialCatalogObjectRequest;
+import org.apache.impala.thrift.TGetPartialCatalogObjectResponse;
+import org.apache.impala.thrift.TPartialCatalogInfo;
 import org.apache.impala.thrift.TPartitionKeyValue;
 import org.apache.impala.thrift.TPrivilege;
 import org.apache.impala.thrift.TTable;
@@ -65,7 +66,6 @@ import org.apache.log4j.Logger;
 import org.apache.thrift.TException;
 import org.apache.thrift.TSerializer;
 import org.apache.thrift.protocol.TBinaryProtocol;
-import org.apache.thrift.protocol.TCompactProtocol;
 
 import com.codahale.metrics.Timer;
 import com.google.common.base.Preconditions;
@@ -1823,5 +1823,61 @@ public class CatalogServiceCatalog extends Catalog {
     } finally {
       tbl.getLock().unlock();
     }
+  }
+
+  public TGetPartialCatalogObjectResponse getPartialCatalogObject(
+      TGetPartialCatalogObjectRequest req) throws CatalogException {
+    TCatalogObject objectDesc = Preconditions.checkNotNull(req.object_desc,
+        "missing object_desc");
+    switch (objectDesc.type) {
+    case CATALOG:
+      return getPartialCatalogInfo(req);
+    case DATABASE:
+      TDatabase dbDesc = Preconditions.checkNotNull(req.object_desc.db);
+      versionLock_.readLock().lock();
+      try {
+        Db db = getDb(dbDesc.getDb_name());
+        if (db == null) {
+          throw new CatalogException(
+              "Database not found: " + req.object_desc.getDb().getDb_name());
+        }
+
+        return db.getPartialInfo(req);
+      } finally {
+        versionLock_.readLock().unlock();
+      }
+    case TABLE:
+    case VIEW: {
+      Table table = getOrLoadTable(objectDesc.getTable().getDb_name(),
+          objectDesc.getTable().getTbl_name());
+      if (table == null) {
+        throw new CatalogException("Table not found: " +
+            objectDesc.getTable().getTbl_name());
+      }
+      // TODO(todd): consider a read-write lock here.
+      table.getLock().lock();
+      try {
+        return table.getPartialInfo(req);
+      } finally {
+        table.getLock().unlock();
+      }
+    }
+    default:
+      throw new CatalogException("Unable to fetch partial info for type: " +
+          req.object_desc.type);
+
+    }
+  }
+
+  private TGetPartialCatalogObjectResponse getPartialCatalogInfo(
+      TGetPartialCatalogObjectRequest req) {
+    TGetPartialCatalogObjectResponse resp = new TGetPartialCatalogObjectResponse();
+    resp.catalog_info = new TPartialCatalogInfo();
+    TCatalogInfoSelector sel = Preconditions.checkNotNull(req.catalog_info_selector,
+        "no catalog_info_selector in request");
+    if (sel.want_db_names) {
+      resp.catalog_info.db_names = ImmutableList.copyOf(dbCache_.get().keySet());
+    }
+    return resp;
   }
 }

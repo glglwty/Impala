@@ -249,6 +249,71 @@ public class ColumnStats {
   }
 
   /**
+   * Convert the statistics back into an HMS-compatible ColumnStatisticsData object.
+   * This is essentially the inverse of {@link #update(Type, ColumnStatisticsData)
+   * above.
+   *
+   * Returns null if statistics for the specified type are not supported.
+   */
+  public ColumnStatisticsData toHmsCompatibleThrift(Type colType) {
+    if (!isSupportedColType(colType)) return null;
+
+    ColumnStatisticsData ret = new ColumnStatisticsData();
+    switch (colType.getPrimitiveType()) {
+    case BOOLEAN:
+      BooleanColumnStatsData boolStats = new BooleanColumnStatsData();
+      boolStats.setNumTrues(-1); // required field.
+      boolStats.setNumFalses(-1); // required field.
+      boolStats.setNumNulls(numNulls_);
+      ret.setBooleanStats(boolStats);
+      break;
+    case TINYINT:
+    case SMALLINT:
+    case INT:
+    case BIGINT:
+    case TIMESTAMP:
+      LongColumnStatsData longStats = new LongColumnStatsData();
+      longStats.setNumDVs(numDistinctValues_);;
+      longStats.setNumNulls(numNulls_);
+      ret.setLongStats(longStats);
+      break;
+    case DOUBLE:
+    case FLOAT:
+      DoubleColumnStatsData doubleStats = new DoubleColumnStatsData();
+      doubleStats.setNumDVs(numDistinctValues_);
+      doubleStats.setNumNulls(numNulls_);
+      ret.setDoubleStats(doubleStats);
+      break;
+    case BINARY:
+      BinaryColumnStatsData binStats = new BinaryColumnStatsData();
+      binStats.setNumNulls(numNulls_);
+      binStats.setMaxColLen(maxSize_);
+      binStats.setAvgColLen(avgSize_);
+      ret.setBinaryStats(binStats);
+      break;
+    case CHAR:
+    case VARCHAR:
+    case STRING:
+      StringColumnStatsData stringStats = new StringColumnStatsData();
+      stringStats.setNumDVs(numDistinctValues_);
+      stringStats.setNumNulls(numNulls_);
+      stringStats.setMaxColLen(maxSize_);
+      stringStats.setAvgColLen(avgSize_);
+      ret.setStringStats(stringStats);
+    break;
+    case DECIMAL:
+      DecimalColumnStatsData decStats = new DecimalColumnStatsData();
+      decStats.setNumNulls(numNulls_);
+      decStats.setNumDVs(numDistinctValues_);
+      ret.setDecimalStats(decStats);
+      break;
+    default:
+      return null;
+    }
+    return ret;
+  }
+
+  /**
    * Sets the member corresponding to the given stats key to 'value'.
    * Requires that the given value is of a type appropriate for the
    * member being set. Throws if that is not the case.
