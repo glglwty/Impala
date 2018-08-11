@@ -653,6 +653,7 @@ public class CatalogOpExecutor {
             reloadFileMetadata, reloadTableSchema, partitionsToUpdate);
       } else {
         tbl.load(true, msClient.getHiveClient(), msTbl);
+        tbl.refreshLastUsedTime();
       }
     }
     tbl.setCatalogVersion(newCatalogVersion);
@@ -722,6 +723,7 @@ public class CatalogOpExecutor {
       applyAlterTable(msTbl, true);
       try (MetaStoreClient msClient = catalog_.getMetaStoreClient()) {
         tbl.load(true, msClient.getHiveClient(), msTbl);
+        tbl.refreshLastUsedTime();
       }
       addSummary(resp, "View has been altered.");
       tbl.setCatalogVersion(newCatalogVersion);

@@ -200,6 +200,9 @@ class CatalogServer {
   /// <host>:25020/table_metrics?name=foo.bar
   void TableMetricsUrlCallback(const Webserver::ArgumentMap& args,
       rapidjson::Document* document);
+
+  void InvalidateUnusedTableCallback(const Webserver::ArgumentMap& args,
+      rapidjson::Document* document);
 };
 
 }

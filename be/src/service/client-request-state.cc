@@ -525,6 +525,20 @@ void ClientRequestState::FinishExecQueryOrDmlRequest() {
     return;
   }
 
+  TUpdateUsedTableNamesRequest req;
+  for (TTableDescriptor desc : query_ctx_.desc_tbl.tableDescriptors) {
+    TTableName name;
+    name.db_name = desc.dbName;
+    name.table_name = desc.tableName;
+    req.tables.emplace_back(name);
+  }
+  TUpdateUsedTableNamesResponse resp;
+  catalog_op_executor_.reset(
+      new CatalogOpExecutor(exec_env_, frontend_, server_profile_));  Status update_used_table_names_status =
+  catalog_op_executor_->UpdateUsedTableNames(req, &resp);
+  if (!update_used_table_names_status.ok()) {
+    LOG(WARNING) << "UpdateUsedTableNames failed: " << update_used_table_names_status;
+  }
   profile_->AddChild(coord_->query_profile());
   UpdateNonErrorOperationState(TOperationState::RUNNING_STATE);
 }

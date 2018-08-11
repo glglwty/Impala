@@ -57,6 +57,8 @@ const string CATALOG_OBJECT_WEB_PAGE = "/catalog_object";
 const string CATALOG_OBJECT_TEMPLATE = "catalog_object.tmpl";
 const string TABLE_METRICS_WEB_PAGE = "/table_metrics";
 const string TABLE_METRICS_TEMPLATE = "table_metrics.tmpl";
+const string INVALIDATE_LRU_TABLE_WEB_PAGE = "/invalidate_lru_table";
+const string INVALIDATE_LRU_TABLE_TEMPLATE = "invalidate_lru_table.tmpl";
 
 // Implementation for the CatalogService thrift interface.
 class CatalogServiceThriftIf : public CatalogServiceIf {
@@ -149,6 +151,19 @@ class CatalogServiceThriftIf : public CatalogServiceIf {
     VLOG_RPC << "SentryAdminCheck(): response=" << ThriftDebugString(resp);
   }
 
+  void UpdateUsedTableNames(TUpdateUsedTableNamesResponse& resp,
+      const TUpdateUsedTableNamesRequest& req) override {
+    VLOG_RPC << "UpdateUsedTableNames(): request=" << ThriftDebugString(req);
+    Status status = catalog_server_->catalog()->UpdateUsedTableNames(req);
+    if (!status.ok()) LOG(ERROR) << status.GetDetail();
+  }
+  void InvalidateUnusedTables(TInvalidateUnusedTablesResponse& resp,
+      const TInvalidateUnusedTablesRequest& req) override {
+    VLOG_RPC << "InvalidateUnusedTables()";
+    Status status = catalog_server_->catalog()->InvalidateUnusedTables(req, &resp);
+    if (!status.ok()) LOG(ERROR) << status.GetDetail();
+  }
+
  private:
   CatalogServer* catalog_server_;
 };
@@ -210,6 +225,9 @@ void CatalogServer::RegisterWebpages(Webserver* webserver) {
   webserver->RegisterUrlCallback(TABLE_METRICS_WEB_PAGE, TABLE_METRICS_TEMPLATE,
       [this](const auto& args, auto* doc) { this->TableMetricsUrlCallback(args, doc); },
       false);
+  webserver->RegisterUrlCallback(INVALIDATE_LRU_TABLE_WEB_PAGE, INVALIDATE_LRU_TABLE_TEMPLATE,
+      [this](const auto& args, auto* doc) {
+          this->InvalidateUnusedTableCallback(args, doc); }, false);
   RegisterLogLevelCallbacks(webserver, true);
 }
 
@@ -497,4 +515,39 @@ bool CatalogServer::AddPendingTopicItem(std::string key, int64_t version,
           << (FLAGS_compact_catalog_topic ?
               Substitute(", compressed size=$0", item.value.size()) : string());
   return true;
+}
+
+void CatalogServer::InvalidateUnusedTableCallback(const Webserver::ArgumentMap& args,
+    rapidjson::Document* document) {
+  auto unused_table_ttl_sec_it = args.find("unused_table_ttl_sec");
+  int unused_table_ttl_sec;
+  Value value;
+  if (unused_table_ttl_sec_it == args.end()) {
+    const char msg[] = "error: no unused_table_ttl_sec specified";
+    value.SetString(msg, arraysize(msg));
+  } else {
+    try {
+      unused_table_ttl_sec = boost::lexical_cast<int>(unused_table_ttl_sec_it->second);
+      TInvalidateUnusedTablesRequest req;
+      TInvalidateUnusedTablesResponse resp;
+      req.__set_if_before(unused_table_ttl_sec);
+      Status status = catalog_->InvalidateUnusedTables(req, &resp);
+      if (status.ok()) {
+        string msg = string("removed tables [");
+        for (TTableName table_name : resp.tables) {
+          msg.append(table_name.db_name).push_back('.');
+          msg.append(table_name.db_name).append(", ");
+        }
+        msg.push_back(']');
+        value.SetString(msg.c_str(), msg.size());
+      } else {
+        string msg = string("error: ") + status.GetDetail();
+        value.SetString(msg.c_str(), msg.size(), document->GetAllocator());
+      }
+    } catch (boost::bad_lexical_cast) {
+      const char msg[] = "error: invalid unused_table_ttl_sec value";
+      value.SetString(msg, arraysize(msg));
+    }
+  }
+  document->AddMember("status", value, document->GetAllocator());
 }

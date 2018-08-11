@@ -22,6 +22,9 @@ import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -56,6 +59,7 @@ import org.apache.impala.common.JniUtil;
 import org.apache.impala.common.Pair;
 import org.apache.impala.common.Reference;
 import org.apache.impala.hive.executor.UdfExecutor;
+import org.apache.impala.service.BackendConfig;
 import org.apache.impala.service.FeSupport;
 import org.apache.impala.thrift.TCatalog;
 import org.apache.impala.thrift.TCatalogObject;
@@ -63,12 +67,15 @@ import org.apache.impala.thrift.TCatalogObjectType;
 import org.apache.impala.thrift.TCatalogUpdateResult;
 import org.apache.impala.thrift.TFunction;
 import org.apache.impala.thrift.TGetCatalogUsageResponse;
+import org.apache.impala.thrift.TInvalidateUnusedTablesRequest;
+import org.apache.impala.thrift.TInvalidateUnusedTablesResponse;
 import org.apache.impala.thrift.TPartitionKeyValue;
 import org.apache.impala.thrift.TPrivilege;
 import org.apache.impala.thrift.TTable;
 import org.apache.impala.thrift.TTableName;
 import org.apache.impala.thrift.TTableUsageMetrics;
 import org.apache.impala.thrift.TUniqueId;
+import org.apache.impala.thrift.TUpdateUsedTableNamesRequest;
 import org.apache.impala.util.PatternMatcher;
 import org.apache.impala.util.SentryProxy;
 import org.apache.log4j.Logger;
@@ -84,6 +91,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+
+import static jodd.util.ThreadUtil.sleep;
 
 /**
  * Specialized Catalog that implements the CatalogService specific Catalog
@@ -251,6 +260,18 @@ public class CatalogServiceCatalog extends Catalog {
     }
     localLibraryPath_ = new String("file://" + localLibraryPath);
     deleteLog_ = new CatalogDeltaLog();
+    final int unusedTableTtlSec = BackendConfig.INSTANCE.getUnusedTableTtlSec();
+    if (unusedTableTtlSec != 0) {
+      new Thread(new Runnable() {
+        @Override
+        public void run() {
+          while (true) {
+            sleep((long)(unusedTableTtlSec) * 1000L);
+            invalidateUnusedTables(unusedTableTtlSec);
+          }
+        }
+      });
+    }
   }
 
   // Timeout for acquiring a table lock
@@ -1458,6 +1479,7 @@ public class CatalogServiceCatalog extends Catalog {
               dbName + "." + tblName, e);
         }
         tbl.load(true, msClient.getHiveClient(), msTbl);
+        tbl.refreshLastUsedTime();
       }
       tbl.setCatalogVersion(newCatalogVersion);
       LOG.info(String.format("Refreshed table metadata: %s", tbl.getFullName()));
@@ -1965,6 +1987,34 @@ public class CatalogServiceCatalog extends Catalog {
       return tbl.getMetrics().toString();
     } finally {
       tbl.getLock().unlock();
+    }
+  }
+
+  public void updateUsedTableNames(TUpdateUsedTableNamesRequest req)
+      throws DatabaseNotFoundException {
+    for (TTableName tableName: req.tables) {
+      getTable(tableName.db_name, tableName.table_name).refreshLastUsedTime();
+    }
+  }
+
+  public TInvalidateUnusedTablesResponse invalidateUnusedTables(
+      TInvalidateUnusedTablesRequest req) {
+    Calendar oldest_table_allowed = null;
+    if (req.isSetUnused_table_ttl_sec()) {
+      oldest_table_allowed= new GregorianCalendar();
+      oldest_table_allowed.add(GregorianCalendar.MILLISECOND, -req.unused_table_ttl_sec);
+    }
+    for (Db db : getAllDbs()) {
+      for (Table table: getAllTables(db)) {
+        // only evict hdfs tables
+        if (table instanceof FeFsTable &&
+            (req.isSetUnused_table_ttl_sec() &&
+                oldest_table_allowed.after(table.lastUsedTime))) {
+          Reference<Boolean> tblWasRemoved = new Reference<>();
+          Reference<Boolean> dbWasAdded = new Reference<>();
+          invalidateTable(table.getTableName().toThrift(), tblWasRemoved, dbWasAdded);
+        }
+      }
     }
   }
 }

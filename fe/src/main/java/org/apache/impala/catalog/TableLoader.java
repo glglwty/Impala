@@ -78,6 +78,7 @@ public class TableLoader {
             "Unrecognized table type for table: " + fullTblName);
       }
       table.load(false, msClient.getHiveClient(), msTbl);
+      table.refreshLastUsedTime();
       table.validate();
     } catch (TableLoadingException e) {
       table = IncompleteTable.createFailedMetadataLoadTable(db, tblName, e);

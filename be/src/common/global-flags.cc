@@ -199,6 +199,9 @@ DEFINE_string(reserved_words_version, "3.0.0", "Reserved words compatibility ver
     " version from which the reserved word list is taken. The value must be one of "
     "[\"2.11.0\", \"3.0.0\"].");
 
+DEFINE_int32(unused_table_ttl_sec, 0, "catalog invalidates tables older than this"
+    "threshold. 0 disables this feature.");
+
 // ++========================++
 // || Startup flag graveyard ||
 // ++========================++

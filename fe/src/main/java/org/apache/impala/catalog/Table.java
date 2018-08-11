@@ -18,7 +18,10 @@
 package org.apache.impala.catalog;
 
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collections;
+import java.util.Date;
+import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -99,6 +102,8 @@ public abstract class Table extends CatalogObjectImpl implements FeTable {
 
   // True if this object is stored in an Impalad catalog cache.
   protected boolean storedInImpaladCatalogCache_ = false;
+
+  protected Calendar lastUsedTime;
 
   // Table metrics. These metrics are applicable to all table types. Each subclass of
   // Table can define additional metrics specific to that table type.
@@ -522,5 +527,9 @@ public abstract class Table extends CatalogObjectImpl implements FeTable {
   public static void updateTimestampProperty(
       org.apache.hadoop.hive.metastore.api.Table msTbl, String propertyKey) {
     msTbl.putToParameters(propertyKey, Long.toString(System.currentTimeMillis() / 1000));
+  }
+
+  public void refreshLastUsedTime() {
+    lastUsedTime = new GregorianCalendar();
   }
 }

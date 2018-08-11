@@ -66,7 +66,10 @@ Catalog::Catalog() {
     {"getCatalogDelta", "([B)[B", &get_catalog_delta_id_},
     {"getCatalogUsage", "()[B", &get_catalog_usage_id_},
     {"getCatalogVersion", "()J", &get_catalog_version_id_},
-    {"prioritizeLoad", "([B)V", &prioritize_load_id_}};
+    {"prioritizeLoad", "([B)V", &prioritize_load_id_},
+    {"updateUsedTableNames", "([B)V", &update_used_table_names_id_},
+    {"invalidateUnusedTables", "([B)[B", &invalidate_unused_tables_id}
+  };
 
   JNIEnv* jni_env = getJNIEnv();
   // Create an instance of the java class JniCatalog
@@ -160,4 +163,11 @@ Status Catalog::PrioritizeLoad(const TPrioritizeLoadRequest& req) {
 
 Status Catalog::SentryAdminCheck(const TSentryAdminCheckRequest& req) {
   return JniUtil::CallJniMethod(catalog_, sentry_admin_check_id_, req);
+}
+Status Catalog::UpdateUsedTableNames(const TUpdateUsedTableNamesRequest& req) {
+  return JniUtil::CallJniMethod(catalog_, update_used_table_names_id_, req);
+}
+Status Catalog::InvalidateUnusedTables(const TInvalidateUnusedTablesRequest& req,
+    TInvalidateUnusedTablesResponse* resp) {
+  return JniUtil::CallJniMethod(catalog_, invalidate_unused_tables_id, req, resp);
 }

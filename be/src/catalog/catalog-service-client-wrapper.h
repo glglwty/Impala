@@ -95,6 +95,22 @@ class CatalogServiceClientWrapper : public CatalogServiceClient {
     recv_SentryAdminCheck(_return);
   }
 
+  void UpdateUsedTableNames(TUpdateUsedTableNamesResponse& _return,
+      const TUpdateUsedTableNamesRequest& req, bool* send_done) {
+    DCHECK(!*send_done);
+    send_UpdateUsedTableNames(req);
+    *send_done = true;
+    recv_UpdateUsedTableNames(_return);
+  }
+
+  void InvalidateUnusedTables(TInvalidateUnusedTablesResponse& _return,
+      const TInvalidateUnusedTablesRequest& req, bool* send_done) {
+    DCHECK(!*send_done);
+    send_InvalidateUnusedTables(req);
+    *send_done = true;
+    recv_InvalidateUnusedTables(_return);
+  }
+
 #pragma clang diagnostic pop
 };
 

@@ -28,7 +28,7 @@ include "Results.thrift"
 
 enum CatalogServiceVersion {
   V1
-}
+TGetPartialCatalogObjectRequest}
 
 // Common header included in all CatalogService requests.
 // TODO: The CatalogServiceVersion/protocol version should be part of the header.
@@ -286,6 +286,22 @@ struct TSentryAdminCheckResponse {
   1: optional Status.TStatus status
 }
 
+struct TUpdateUsedTableNamesRequest {
+    1: required list<CatalogObjects.TTableName>  tables;
+}
+
+struct TUpdateUsedTableNamesResponse {
+
+}
+
+struct TInvalidateUnusedTablesRequest {
+    1: optional i32 unused_table_ttl_sec;
+}
+
+struct TInvalidateUnusedTablesResponse {
+    1: required list<CatalogObjects.TTableName> tables;
+}
+
 // The CatalogService API
 service CatalogService {
   // Executes a DDL request and returns details on the result of the operation.
@@ -316,4 +332,7 @@ service CatalogService {
   // TODO: When Sentry Service has a better mechanism to perform these changes this API
   // should be deprecated.
   TSentryAdminCheckResponse SentryAdminCheck(1: TSentryAdminCheckRequest req);
+
+  TUpdateUsedTableNamesResponse UpdateUsedTableNames(1: TUpdateUsedTableNamesRequest req);
+  TInvalidateUnusedTablesResponse InvalidateUnusedTables(1: TInvalidateUnusedTablesRequest req);
 }
