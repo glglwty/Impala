@@ -200,6 +200,13 @@ class CatalogServiceThriftIf : public CatalogServiceIf {
     VLOG_RPC << "SentryAdminCheck(): response=" << ThriftDebugString(resp);
   }
 
+  void UpdateTableUsage(TUpdateTableUsageResponse& resp,
+      const TUpdateTableUsageRequest& req) override {
+    VLOG_RPC << "UpdateTableUsage(): request=" << ThriftDebugString(req);
+    Status status = catalog_server_->catalog()->UpdateTableUsage(req);
+    if (!status.ok()) LOG(WARNING) << status.GetDetail();
+  }
+
  private:
   CatalogServer* catalog_server_;
 };
