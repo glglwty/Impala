@@ -79,4 +79,8 @@ struct TBackendGflags {
   26: required string authorized_proxy_group_config
 
   27: required bool use_local_catalog
+
+  28: required i32 unused_table_ttl_sec
+
+  29: required bool invalidate_tables_on_memory_pressure
 }

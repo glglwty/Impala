@@ -42,6 +42,7 @@ import org.apache.impala.catalog.MetaStoreClientPool.MetaStoreClient;
 import org.apache.impala.common.FileSystemUtil;
 import org.apache.impala.common.Pair;
 import org.apache.impala.common.Reference;
+import org.apache.impala.service.BackendConfig;
 import org.apache.impala.service.FeSupport;
 import org.apache.impala.thrift.TCatalog;
 import org.apache.impala.thrift.TCatalogInfoSelector;
@@ -60,6 +61,7 @@ import org.apache.impala.thrift.TTableName;
 import org.apache.impala.thrift.TTableUsageMetrics;
 import org.apache.impala.thrift.TUniqueId;
 import org.apache.impala.util.FunctionUtils;
+import org.apache.impala.thrift.TUpdateUsedTableNamesRequest;
 import org.apache.impala.util.PatternMatcher;
 import org.apache.impala.util.SentryProxy;
 import org.apache.log4j.Logger;
@@ -73,6 +75,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+
 
 /**
  * Specialized Catalog that implements the CatalogService specific Catalog
@@ -140,7 +143,7 @@ import com.google.common.collect.Sets;
  * case missing tables (tables that are not yet loaded) are submitted to the
  * TableLoadingMgr any table metadata is invalidated and on startup. The metadata of
  * fully loaded tables (e.g. HdfsTable, HBaseTable, etc) are updated in-place and don't
- * trigger a background metadata load through the TableLoadingMgr. Accessing a table
+ * gcTrigger_ a background metadata load through the TableLoadingMgr. Accessing a table
  * that is not yet loaded (via getTable()), will load the table's metadata on-demand,
  * out-of-band of the table loading thread pool.
  *
@@ -208,6 +211,8 @@ public class CatalogServiceCatalog extends Catalog {
 
   private final String localLibraryPath_;
 
+  private CatalogdTableShrinker catalogdTableShrinker_;
+
   /**
    * Initialize the CatalogServiceCatalog. If 'loadInBackground' is true, table metadata
    * will be loaded in the background. 'initialHmsCnxnTimeoutSec' specifies the time (in
@@ -239,6 +244,15 @@ public class CatalogServiceCatalog extends Catalog {
     }
     localLibraryPath_ = localLibraryPath;
     deleteLog_ = new CatalogDeltaLog();
+    final boolean invalidateTableOnMemoryPressure =
+        BackendConfig.INSTANCE.invalidateTableOnMemoryPressure();
+    final int unusedTableTtlSec = BackendConfig.INSTANCE.getUnusedTableTtlSec();
+    if (unusedTableTtlSec > 0 || invalidateTableOnMemoryPressure) {
+      catalogdTableShrinker_ = new CatalogdTableShrinker(this,
+          unusedTableTtlSec, invalidateTableOnMemoryPressure);
+    } else {
+      catalogdTableShrinker_ = null;
+    }
   }
 
   // Timeout for acquiring a table lock
@@ -492,7 +506,7 @@ public class CatalogServiceCatalog extends Catalog {
   /**
    * Get a snapshot view of all the databases in the catalog.
    */
-  private List<Db> getAllDbs() {
+  List<Db> getAllDbs() {
     versionLock_.readLock().lock();
     try {
       return ImmutableList.copyOf(dbCache_.get().values());
@@ -562,7 +576,7 @@ public class CatalogServiceCatalog extends Catalog {
   /**
    * Get a snapshot view of all the tables in a database.
    */
-  private List<Table> getAllTables(Db db) {
+  List<Table> getAllTables(Db db) {
     Preconditions.checkNotNull(db);
     versionLock_.readLock().lock();
     try {
@@ -1315,6 +1329,7 @@ public class CatalogServiceCatalog extends Catalog {
               dbName + "." + tblName, e);
         }
         tbl.load(true, msClient.getHiveClient(), msTbl);
+        tbl.refreshLastUsedTime();
       }
       tbl.setCatalogVersion(newCatalogVersion);
       LOG.info(String.format("Refreshed table metadata: %s", tbl.getFullName()));
@@ -1879,5 +1894,23 @@ public class CatalogServiceCatalog extends Catalog {
       resp.catalog_info.db_names = ImmutableList.copyOf(dbCache_.get().keySet());
     }
     return resp;
+  }
+
+  /**
+   * Set the last used time of specified tables to now.
+   */
+  public void updateUsedTableNames(TUpdateUsedTableNamesRequest req)
+      throws DatabaseNotFoundException {
+    for (TTableName tableName: req.tables.keySet()) {
+      getTable(tableName.db_name, tableName.table_name).refreshLastUsedTime();
+    }
+  }
+
+  CatalogdTableShrinker getCatalogdTableShrinker() {
+    return catalogdTableShrinker_;
+  }
+
+  void setCatalogdTableShrinker(CatalogdTableShrinker cleaner) {
+    catalogdTableShrinker_ = cleaner;
   }
 }

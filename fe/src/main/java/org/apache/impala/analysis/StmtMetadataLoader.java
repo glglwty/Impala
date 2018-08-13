@@ -25,7 +25,9 @@ import org.apache.impala.catalog.FeCatalog;
 import org.apache.impala.catalog.FeDb;
 import org.apache.impala.catalog.FeTable;
 import org.apache.impala.catalog.FeView;
+import org.apache.impala.catalog.ImpaladTableUsageTracker;
 import org.apache.impala.common.InternalException;
+import org.apache.impala.service.BackendConfig;
 import org.apache.impala.service.Frontend;
 import org.apache.impala.util.EventSequence;
 import org.apache.impala.util.TUniqueIdUtil;
@@ -136,6 +138,9 @@ public class StmtMetadataLoader {
     Preconditions.checkState(dbs_.isEmpty() && loadedTbls_.isEmpty());
     Preconditions.checkState(numLoadRequestsSent_ == 0);
     Preconditions.checkState(numCatalogUpdatesReceived_ == 0);
+    if (ImpaladTableUsageTracker.INSTANCE != null) {
+      ImpaladTableUsageTracker.INSTANCE.addTables(tbls);
+    }
     FeCatalog catalog = fe_.getCatalog();
     Set<TableName> missingTbls = getMissingTables(catalog, tbls);
     // There are no missing tables. Return to avoid making an RPC to the CatalogServer

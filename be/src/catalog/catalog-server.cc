@@ -160,6 +160,13 @@ class CatalogServiceThriftIf : public CatalogServiceIf {
     VLOG_RPC << "SentryAdminCheck(): response=" << ThriftDebugString(resp);
   }
 
+  void UpdateUsedTableNames(TUpdateUsedTableNamesResponse& resp,
+      const TUpdateUsedTableNamesRequest& req) override {
+    VLOG_RPC << "UpdateUsedTableNames(): request=" << ThriftDebugString(req);
+    Status status = catalog_server_->catalog()->UpdateUsedTableNames(req);
+    if (!status.ok()) LOG(ERROR) << status.GetDetail();
+  }
+
  private:
   CatalogServer* catalog_server_;
 };

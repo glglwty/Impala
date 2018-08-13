@@ -23,10 +23,12 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.yarn.webapp.hamlet2.Hamlet;
 import org.apache.impala.analysis.TableName;
 import org.apache.impala.catalog.MetaStoreClientPool.MetaStoreClient;
 import org.apache.impala.common.InternalException;
 import org.apache.impala.common.Pair;
+import org.apache.impala.service.BackendConfig;
 import org.apache.impala.service.FeSupport;
 import org.apache.impala.thrift.TCatalogObject;
 import org.apache.impala.thrift.TCatalogObjectType;
@@ -96,6 +98,8 @@ public class ImpaladCatalog extends Catalog implements FeCatalog {
   // Used during table creation.
   private final String defaultKuduMasterHosts_;
 
+  private ImpaladTableUsageTracker impaladTableUsageTracker_;
+
   public ImpaladCatalog(String defaultKuduMasterHosts) {
     super();
     addDb(BuiltinsDb.getInstance());
@@ -103,6 +107,12 @@ public class ImpaladCatalog extends Catalog implements FeCatalog {
     // Ensure the contents of the CatalogObjectVersionSet instance are cleared when a
     // new instance of ImpaladCatalog is created (see IMPALA-6486).
     CatalogObjectVersionSet.INSTANCE.clear();
+    final boolean invalidateTableOnMemoryPressure =
+        BackendConfig.INSTANCE.invalidateTableOnMemoryPressure();
+    final int unusedTableTtlSec = BackendConfig.INSTANCE.getUnusedTableTtlSec();
+    if (unusedTableTtlSec > 0 || invalidateTableOnMemoryPressure) {
+      ImpaladTableUsageTracker.create();
+    }
   }
 
   /**

@@ -371,6 +371,19 @@ struct TSentryAdminCheckResponse {
   1: optional Status.TStatus status
 }
 
+struct TTableUsage {
+  // number of usages since last report
+  1: required i32 num_usage
+}
+
+struct TUpdateUsedTableNamesRequest {
+  1: required map<CatalogObjects.TTableName, TTableUsage>  tables;
+}
+
+struct TUpdateUsedTableNamesResponse {
+
+}
+
 // The CatalogService API
 service CatalogService {
   // Executes a DDL request and returns details on the result of the operation.
@@ -403,4 +416,5 @@ service CatalogService {
   TSentryAdminCheckResponse SentryAdminCheck(1: TSentryAdminCheckRequest req);
 
   TGetPartialCatalogObjectResponse GetPartialCatalogObject(1: TGetPartialCatalogObjectRequest req);
+  TUpdateUsedTableNamesResponse UpdateUsedTableNames(1: TUpdateUsedTableNamesRequest req);
 }

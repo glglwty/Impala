@@ -69,6 +69,9 @@ class CatalogOpExecutor {
   Status PrioritizeLoad(const TPrioritizeLoadRequest& req,
       TPrioritizeLoadResponse* result);
 
+  Status UpdateUsedTableNames(const TUpdateUsedTableNamesRequest& req,
+      TUpdateUsedTableNamesResponse* resp);
+
   /// Makes an RPC to the CatalogServer to verify whether the specified user has privileges
   /// to access the Sentry Policy Service. Returns OK if the user has privileges or
   /// a bad status if the user does not have privileges (or if there was an error).

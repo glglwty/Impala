@@ -49,6 +49,7 @@ import org.apache.impala.thrift.TGetPartialCatalogObjectRequest;
 import org.apache.impala.thrift.TGetTablesParams;
 import org.apache.impala.thrift.TGetTableMetricsParams;
 import org.apache.impala.thrift.TGetTablesResult;
+import org.apache.impala.thrift.TInvalidateUnusedTablesRequest;
 import org.apache.impala.thrift.TLogLevel;
 import org.apache.impala.thrift.TPrioritizeLoadRequest;
 import org.apache.impala.thrift.TResetMetadataRequest;
@@ -56,6 +57,7 @@ import org.apache.impala.thrift.TSentryAdminCheckRequest;
 import org.apache.impala.thrift.TUniqueId;
 import org.apache.impala.thrift.TUpdateCatalogRequest;
 import org.apache.impala.thrift.TBackendGflags;
+import org.apache.impala.thrift.TUpdateUsedTableNamesRequest;
 import org.apache.impala.util.GlogAppender;
 import org.apache.impala.util.PatternMatcher;
 import org.apache.thrift.TException;
@@ -288,5 +290,11 @@ public class JniCatalog {
   public byte[] getCatalogUsage() throws ImpalaException, TException {
     TSerializer serializer = new TSerializer(protocolFactory_);
     return serializer.serialize(catalog_.getCatalogUsage());
+  }
+
+  public void updateUsedTableNames(byte[] req) throws ImpalaException {
+    TUpdateUsedTableNamesRequest thriftReq = new TUpdateUsedTableNamesRequest();
+    JniUtil.deserializeThrift(protocolFactory_, thriftReq, req);
+    catalog_.updateUsedTableNames(thriftReq);
   }
 }

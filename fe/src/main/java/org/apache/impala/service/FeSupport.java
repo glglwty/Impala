@@ -106,6 +106,8 @@ public class FeSupport {
   public native static byte[] NativeGetPartialCatalogObject(byte[] thriftReq)
       throws InternalException;
 
+  public native static byte[] NativeReportTableUsage(byte[] thriftReq);
+
   // Parses a string of comma-separated key=value query options ('csvQueryOptions'),
   // updates the existing query options ('queryOptions') with them and returns the
   // resulting serialized TQueryOptions object.

@@ -252,4 +252,9 @@ Status DecompressCatalogObject(const uint8_t* src, uint32_t size, string* dst) {
   return Status::OK();
 }
 
+bool TTableName::operator<(const impala::TTableName& that) const {
+  int db_cmp = db_name.compare(that.db_name);
+  return db_cmp < 0 || (db_cmp == 0 && table_name < that.table_name);
+}
+
 }
