@@ -60,6 +60,7 @@ import org.apache.impala.thrift.TBackendGflags;
 import org.apache.impala.thrift.TFunctionBinaryType;
 import org.apache.impala.thrift.TGetPartitionStatsRequest;
 import org.apache.impala.thrift.TGetPartitionStatsResponse;
+import org.apache.impala.thrift.TPartitionKeyValue;
 import org.apache.impala.thrift.TPartitionStats;
 import org.apache.impala.thrift.TPrincipalType;
 import org.apache.impala.thrift.TPrivilege;
@@ -72,6 +73,7 @@ import org.junit.Test;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -321,8 +323,8 @@ public class CatalogTest {
   }
 
   /**
-   * Regression test for IMPALA-7320: we should use batch APIs to fetch
-   * file permissions for partitions.
+   * Regression test for IMPALA-7320 and IMPALA-7047: we should use batch APIs to fetch
+   * file permissions for partitions when loading or reloading.
    */
   @Test
   public void testNumberOfGetFileStatusCalls() throws CatalogException, IOException {
@@ -352,6 +354,9 @@ public class CatalogTest {
     // We expect only one getFileStatus call, for the top-level directory.
     assertEquals(1L, (long)opsCounts.getLong("op_get_file_status"));
 
+    // None of the underlying files changed so we should not do any ops for the files.
+    assertEquals(0L, (long)opsCounts.getLong("op_get_file_block_locations"));
+
     // Now test REFRESH on the table...
     stats.reset();
     catalog_.reloadTable(table);
@@ -362,6 +367,26 @@ public class CatalogTest {
     // the permissions of the partition directories themselves.
     assertEquals(table.getPartitionIds().size(),
         (long)opsCounts.getLong("op_list_status"));
+    // None of the underlying files changed so we should not do any ops for the files.
+    assertEquals(0L, (long)opsCounts.getLong("op_get_file_block_locations"));
+
+    // Reloading a specific partition should not make an RPC per file
+    // (regression test for IMPALA-7047).
+    stats.reset();
+    catalog_.reloadPartition(table, ImmutableList.of(
+        new TPartitionKeyValue("year", "2010"),
+        new TPartitionKeyValue("month", "10")));
+    assertEquals(0L, (long)opsCounts.getLong("op_get_file_block_locations"));
+
+    // Loading or reloading an unpartitioned table with some files in it should not make
+    // an RPC per file.
+    stats.reset();
+    HdfsTable unpartTable = (HdfsTable)catalog_.getOrLoadTable(
+        "functional", "alltypesaggmultifilesnopart");
+    assertEquals(0L, (long)opsCounts.getLong("op_get_file_block_locations"));
+    stats.reset();
+    catalog_.reloadTable(unpartTable);
+    assertEquals(0L, (long)opsCounts.getLong("op_get_file_block_locations"));
   }
 
 
