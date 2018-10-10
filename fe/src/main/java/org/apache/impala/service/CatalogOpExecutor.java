@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.google.common.collect.Iterables;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -3258,36 +3259,29 @@ public class CatalogOpExecutor {
    */
   private void bulkAlterPartitions(String dbName, String tableName,
       List<HdfsPartition> modifiedParts) throws ImpalaException {
-    List<org.apache.hadoop.hive.metastore.api.Partition> hmsPartitions =
-        Lists.newArrayList();
-    for (HdfsPartition p: modifiedParts) {
-      org.apache.hadoop.hive.metastore.api.Partition msPart = p.toHmsPartition();
-      if (msPart != null) hmsPartitions.add(msPart);
-    }
-    if (hmsPartitions.isEmpty()) return;
-
     try (MetaStoreClient msClient = catalog_.getMetaStoreClient()) {
-      // Apply the updates in batches of 'MAX_PARTITION_UPDATES_PER_RPC'.
-      for (List<Partition> hmsPartitionsSubList :
-        Lists.partition(hmsPartitions, MAX_PARTITION_UPDATES_PER_RPC)) {
-        try {
+      List<org.apache.hadoop.hive.metastore.api.Partition> hmsPartitions = Lists.newArrayList();
+      List<HdfsPartition> partitions = Lists.newArrayList();
+      Iterator<HdfsPartition> it = modifiedParts.iterator();
+      while (it.hasNext()) {
+        HdfsPartition partition = it.next();
+        if (partition.getCachedMsPartitionDescriptor() != null) {
+          partitions.add(partition);
+          hmsPartitions.add(partition.toHmsPartition());
+        }
+        // Apply the updates in batches of 'MAX_PARTITION_UPDATES_PER_RPC'.
+        if (!it.hasNext() || partitions.size() == MAX_PARTITION_UPDATES_PER_RPC) {
           // Alter partitions in bulk.
-          MetastoreShim.alterPartitions(msClient.getHiveClient(), dbName, tableName,
-              hmsPartitionsSubList);
-          // Mark the corresponding HdfsPartition objects as dirty
-          for (org.apache.hadoop.hive.metastore.api.Partition msPartition:
-              hmsPartitionsSubList) {
-            try {
-              catalog_.getHdfsPartition(dbName, tableName, msPartition).markDirty();
-            } catch (PartitionNotFoundException e) {
-              LOG.error(String.format("Partition of table %s could not be found: %s",
-                  tableName, e.getMessage()));
-              continue;
-            }
+          try {
+            MetastoreShim.alterPartitions(msClient.getHiveClient(), dbName, tableName,
+                hmsPartitions);
+          } catch (TException e) {
+            throw new ImpalaRuntimeException(
+                String.format(HMS_RPC_ERROR_FORMAT_STR, "alter_partitions"), e);
           }
-        } catch (TException e) {
-          throw new ImpalaRuntimeException(
-              String.format(HMS_RPC_ERROR_FORMAT_STR, "alter_partitions"), e);
+          for (HdfsPartition hdfsPartition : partitions) hdfsPartition.markDirty();
+          partitions.clear();
+          hmsPartitions.clear();
         }
       }
     }
